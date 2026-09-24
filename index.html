@@ -11,10 +11,10 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
-  <link rel="stylesheet" href="style.css?v=6-1">
+  <link rel="stylesheet" href="style.css?v=7-1">
   <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script defer src="config.js"></script>
-  <script defer src="app.js?v=6-1"></script>
+  <script defer src="app.js?v=7-1"></script>
 </head>
 <body>
   <main class="shell">
@@ -23,13 +23,25 @@
     <section class="card narrow" id="login" hidden><h2>เข้าสู่ระบบ</h2><p>ข้อมูลการเงินจะแสดงหลังเข้าสู่ระบบเท่านั้น</p><form id="login-form"><label>อีเมล<input id="email" type="email" autocomplete="username" required></label><label>รหัสผ่าน<input id="password" type="password" autocomplete="current-password" required></label><button type="submit">เข้าสู่ระบบ</button></form><p class="message" id="login-message" role="status"></p></section>
     <section id="workspace" hidden>
       <div class="welcome"><div><span class="eyebrow">PRIVATE WORKSPACE</span><h2 id="view-title">ภาพรวมการเงิน</h2><p id="user-email"></p></div><button class="primary" id="quick-add">+ บันทึกรายการ</button></div>
-      <nav class="tabs" aria-label="หน้าในเว็บ"><button class="tab active" data-view="dashboard">ภาพรวม</button><button class="tab" data-view="transactions">รายการเงิน</button><button class="tab" data-view="accounts">บัญชีและหมวด</button><button class="tab" data-view="notes">บันทึก</button></nav>
+      <nav class="tabs" aria-label="หน้าในเว็บ"><button class="tab active" data-view="dashboard">ภาพรวม</button><button class="tab" data-view="transactions">รายการเงิน</button><button class="tab" data-view="portfolio">พอร์ตหุ้น</button><button class="tab" data-view="accounts">บัญชีและหมวด</button><button class="tab" data-view="notes">บันทึก</button></nav>
       <p class="message" id="workspace-message" role="status"></p>
       <section class="view active" id="dashboard-view">
         <div class="dashboard-controls"><p>สรุปจากรายการที่บันทึกจริง · ไม่นับรายการโอนและรายการที่ลบ</p><div class="dashboard-filters"><label>สกุลเงิน<select id="dashboard-currency"><option value="THB">THB</option><option value="USD">USD</option></select></label><label>ช่วงเวลา<select id="dashboard-period"><option value="3">3 เดือน</option><option value="6" selected>6 เดือน</option><option value="12">12 เดือน</option></select></label></div></div>
         <div class="dashboard-metrics" id="dashboard-metrics"></div>
         <div class="grid dashboard-grid"><section class="card"><div class="section-head"><div><h3>รายรับและรายจ่ายรายเดือน</h3><p>รายรับเป็นยอดหลังหักภาษี</p></div></div><div id="dashboard-chart" class="dashboard-chart" role="img" aria-label="กราฟรายรับและรายจ่ายรายเดือน"></div><div class="chart-legend"><span><i class="income-dot"></i> รายรับสุทธิ</span><span><i class="expense-dot"></i> รายจ่าย</span></div></section><section class="card"><h3>รายจ่ายตามหมวด</h3><div id="dashboard-categories" class="dashboard-categories"></div></section></div>
         <div class="grid dashboard-grid"><section class="card"><h3>ที่มารายรับ</h3><div id="dashboard-sources" class="dashboard-categories"></div><p class="muted" id="dashboard-tax"></p></section><section class="card"><div class="section-head"><h3>รายการล่าสุด</h3><button class="outline small" id="dashboard-all">ดูทั้งหมด</button></div><div id="dashboard-recent" class="dashboard-recent"></div></section></div>
+      </section>
+      <section class="view" id="portfolio-view">
+        <div class="portfolio-intro"><div><h3>พอร์ตหุ้นของฉัน</h3><p>บันทึกซื้อ–ขายและราคาล่าสุดเอง แยกหุ้นไทย THB กับหุ้นสหรัฐ USD</p></div><label>ตลาด<select id="portfolio-market"><option value="SET">หุ้นไทย · THB</option><option value="US">หุ้นสหรัฐ · USD</option></select></label></div>
+        <p class="portfolio-notice">รายการพอร์ตยังไม่เปลี่ยนยอดบัญชีเงินอัตโนมัติ และราคาที่กรอกเป็นราคาอ้างอิง ไม่ใช่ราคาตลาดเรียลไทม์</p>
+        <div class="dashboard-metrics" id="portfolio-metrics"></div>
+        <section class="card"><div class="section-head"><div><h3>หุ้นที่ติดตาม</h3><p>มูลค่าและกำไรที่ยังไม่ขายจะแสดงเมื่อใส่ราคาล่าสุด</p></div></div><div id="portfolio-holdings" class="holdings-grid"></div></section>
+        <div class="grid portfolio-form-grid">
+          <section class="card"><h3>เพิ่มหุ้น</h3><form id="security-form"><label>สัญลักษณ์หุ้น<input id="security-symbol" maxlength="20" placeholder="เช่น PTT หรือ AAPL" autocapitalize="characters" required></label><label>ชื่อหุ้น<input id="security-name" maxlength="120" placeholder="ชื่อบริษัท" required></label><button type="submit">เพิ่มหุ้นในตลาดที่เลือก</button></form></section>
+          <section class="card"><h3>อัปเดตราคาอ้างอิง</h3><form id="price-form"><label>หุ้น<select id="price-security" required></select></label><div class="form-row"><label>ราคาต่อหุ้น<input id="latest-price" type="number" min="0" step="0.0001" inputmode="decimal" required></label><label>วันที่ราคา<input id="price-date" type="date" required></label></div><button type="submit">บันทึกราคา</button></form></section>
+        </div>
+        <div class="grid portfolio-form-grid"><section class="card"><h3>บันทึกซื้อ–ขาย</h3><form id="trade-form"><div class="form-row"><label>หุ้น<select id="trade-security" required></select></label><label>ประเภท<select id="trade-side"><option value="buy">ซื้อ</option><option value="sell">ขาย</option></select></label></div><div class="form-row"><label>วันที่ซื้อ–ขาย<input id="trade-date" type="date" required></label><label>จำนวนหุ้น<input id="trade-quantity" type="number" min="0.0001" step="0.0001" inputmode="decimal" required></label></div><div class="form-row"><label>ราคาต่อหุ้น<input id="trade-price" type="number" min="0.0001" step="0.0001" inputmode="decimal" required></label><label>ค่าธรรมเนียม<input id="trade-fees" type="number" min="0" step="0.0001" inputmode="decimal" value="0" required></label></div><label>บันทึกเหตุผล / รายละเอียด<input id="trade-note" maxlength="500" placeholder="เช่น ซื้อสะสมระยะยาว"></label><p class="trade-preview" id="trade-preview">กรอกจำนวนและราคาเพื่อดูยอดโดยประมาณ</p><button type="submit">บันทึกรายการ</button></form></section><section class="card"><h3>วิธีคำนวณพอร์ต</h3><p class="muted">ต้นทุนซื้อรวมค่าธรรมเนียม เมื่อขาย ระบบตัดต้นทุนตามต้นทุนเฉลี่ยถ่วงน้ำหนักของหุ้นที่ถือ ณ วันขาย กำไรที่ขายแล้วเท่ากับเงินขายสุทธิหักต้นทุนที่ตัดออก</p><p class="muted">ค่าที่แสดงใช้ติดตามพอร์ตส่วนตัว ไม่ใช่ฐานต้นทุนเพื่อยื่นภาษี</p></section></div>
+        <section class="card"><div class="section-head"><div><h3>ประวัติซื้อ–ขาย</h3><p>ยกเลิกรายการผิดและกู้คืนได้ ระบบจะตรวจจำนวนหุ้นอีกครั้ง</p></div><button class="outline small" id="toggle-void-trades">ดูรายการที่ยกเลิก</button></div><div class="table-wrap"><table><thead><tr><th>วันที่</th><th>หุ้น</th><th>ประเภท</th><th class="right">จำนวน</th><th class="right">ราคาต่อหุ้น</th><th class="right">ยอดรวม</th><th>จัดการ</th></tr></thead><tbody id="trade-list"></tbody></table></div></section>
       </section>
       <section class="view" id="transactions-view">
         <div class="balance-grid" id="balance-cards"></div>

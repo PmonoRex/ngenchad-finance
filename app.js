@@ -1,7 +1,7 @@
 (() => {
   const $ = id => document.getElementById(id);
   const config = window.APP_CONFIG || {};
-  const state = { user: null, accounts: [], balances: [], categories: [], transactions: [], notes: [], templates: [], editTransaction: null, editNote: null, trash: false };
+  const state = { user: null, accounts: [], balances: [], categories: [], transactions: [], notes: [], templates: [], securities: [], trades: [], editTransaction: null, editNote: null, trash: false, voidTrades: false };
   const sourceNames = { salary: 'เงินเดือน', freelance: 'งานเสริม', dividend: 'ปันผล', other: 'รายรับอื่น' };
   const kindNames = { income: 'รายรับ', expense: 'รายจ่าย', transfer: 'โอนเงิน' };
   const visible = (id, yes) => { $(id).hidden = !yes; };
@@ -53,15 +53,17 @@
   }
   async function loadData() {
     try {
-      const [accounts, balances, categories, transactions, notes, templates] = await Promise.all([
+      const [accounts, balances, categories, transactions, notes, templates, securities, trades] = await Promise.all([
         allRows('accounts', 'id,name,kind,currency,opening_balance,created_at,archived_at', q => q.order('created_at', { ascending: true })),
         allRows('account_balances', 'account_id,owner_id,currency,balance'),
         allRows('categories', 'id,name,flow', q => q.order('name')),
         allRows('cash_transactions', 'id,kind,occurred_on,from_account_id,to_account_id,category_id,amount,received_amount,description,gross_amount,withheld_tax_amount,income_source,deleted_at,created_at', q => q.order('occurred_on', { ascending: false }).order('created_at', { ascending: false })),
         allRows('notes', 'id,title,body,transaction_id,created_at', q => q.order('created_at', { ascending: false })),
-        allRows('quick_templates', 'id,name,kind,account_id,category_id,amount,description,income_source,gross_amount,withheld_tax_amount,created_at', q => q.order('created_at', { ascending: false }))
+        allRows('quick_templates', 'id,name,kind,account_id,category_id,amount,description,income_source,gross_amount,withheld_tax_amount,created_at', q => q.order('created_at', { ascending: false })),
+        allRows('securities', 'id,market,symbol,name,currency,last_price,price_as_of,created_at', q => q.order('market').order('symbol')),
+        allRows('investment_trades', 'id,security_id,side,traded_on,quantity,unit_price,gross_amount,fees,note,voided_at,created_at', q => q.order('traded_on', { ascending: false }).order('created_at', { ascending: false }))
       ]);
-      Object.assign(state, { accounts, balances, categories, transactions, notes, templates });
+      Object.assign(state, { accounts, balances, categories, transactions, notes, templates, securities, trades });
       renderAll();
     } catch (error) { say(`โหลดข้อมูลไม่สำเร็จ: ${error.message}`, true); }
   }
@@ -71,18 +73,18 @@
     $('status').textContent = user ? 'ข้อมูลส่วนตัว' : 'เข้าสู่ระบบเพื่อดูข้อมูล';
     $('user-email').textContent = user?.email || '';
     if (user) void loadData();
-    else { Object.assign(state, { accounts: [], balances: [], categories: [], transactions: [], notes: [], templates: [] }); say(''); }
+    else { Object.assign(state, { accounts: [], balances: [], categories: [], transactions: [], notes: [], templates: [], securities: [], trades: [] }); say(''); }
   }
   function switchView(view) {
-    for (const name of ['dashboard', 'transactions', 'accounts', 'notes']) {
+    for (const name of ['dashboard', 'transactions', 'portfolio', 'accounts', 'notes']) {
       $(`${name}-view`).classList.toggle('active', name === view);
       document.querySelector(`[data-view="${name}"]`).classList.toggle('active', name === view);
     }
-    $('view-title').textContent = { dashboard: 'ภาพรวมการเงิน', transactions: 'รายการเงิน', accounts: 'บัญชีและหมวด', notes: 'บันทึก' }[view];
+    $('view-title').textContent = { dashboard: 'ภาพรวมการเงิน', transactions: 'รายการเงิน', portfolio: 'พอร์ตหุ้น', accounts: 'บัญชีและหมวด', notes: 'บันทึก' }[view];
     say('');
   }
 
-  function renderAll() { renderDashboard(); renderAccounts(); renderCategories(); renderTransactions(); renderTemplates(); renderNotes(); }
+  function renderAll() { renderDashboard(); renderPortfolio(); renderAccounts(); renderCategories(); renderTransactions(); renderTemplates(); renderNotes(); }
   function dashboardCurrency(t) {
     const id = t.kind === 'income' ? t.to_account_id : t.from_account_id;
     return account(id)?.currency;
@@ -168,6 +170,94 @@
       detail.append(elem('strong', t.description || category(t.category_id)?.name || kindNames[t.kind]), elem('small', `${t.occurred_on} · ${kindNames[t.kind]}`));
       row.append(detail, elem('strong', `${t.kind === 'income' ? '+' : '−'}${money(t.amount, currency)}`, t.kind === 'income' ? 'positive' : 'negative')); recentBox.append(row);
     }
+  }
+  const roundDiv = (value, divisor) => (value + divisor / 2n) / divisor;
+  const shareText = value => decimal(value).replace(/\.?0+$/, '');
+  function security(id) { return state.securities.find(s => s.id === id); }
+  function tradeGross(quantity, price) { return roundDiv(quantity * price, 10000n); }
+  function portfolioModel(securityId, extraTrade = null) {
+    const trades = state.trades.filter(t => t.security_id === securityId && !t.voided_at);
+    if (extraTrade) trades.push(extraTrade);
+    trades.sort((a, b) => a.traded_on.localeCompare(b.traded_on) || a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
+    let shares = 0n, cost = 0n, realized = 0n;
+    for (const t of trades) {
+      const quantity = units(t.quantity), gross = units(t.gross_amount), fees = units(t.fees);
+      if (t.side === 'buy') { shares += quantity; cost += gross + fees; }
+      else {
+        if (quantity > shares) throw new Error('ขายเกินจำนวนหุ้นที่ถือ ณ วันที่รายการ');
+        if (fees > gross) throw new Error('ค่าธรรมเนียมขายเกินมูลค่าขาย');
+        const removedCost = quantity === shares ? cost : roundDiv(cost * quantity, shares);
+        shares -= quantity; cost -= removedCost; realized += gross - fees - removedCost;
+      }
+    }
+    return { shares, cost, realized };
+  }
+  function renderPortfolio() {
+    const market = $('portfolio-market').value, currency = market === 'SET' ? 'THB' : 'USD';
+    const listed = state.securities.filter(s => s.market === market);
+    fillSelect($('trade-security'), listed, 'เลือกหุ้น', s => `${s.symbol} · ${s.name}`);
+    fillSelect($('price-security'), listed, 'เลือกหุ้น', s => `${s.symbol} · ${s.name}`);
+    let totalCost = 0n, totalValue = 0n, totalUnrealized = 0n, totalRealized = 0n, priced = 0, heldCount = 0;
+    const holdings = $('portfolio-holdings'); holdings.replaceChildren();
+    if (!listed.length) holdings.append(elem('p', 'ยังไม่มีหุ้นในตลาดนี้ เริ่มจากเพิ่มหุ้นด้านล่าง', 'empty'));
+    for (const s of listed) {
+      let model;
+      try { model = portfolioModel(s.id); } catch (error) { holdings.append(elem('p', `${s.symbol}: ${error.message}`, 'error')); continue; }
+      const { shares, cost, realized } = model;
+      totalRealized += realized;
+      if (shares > 0n) { heldCount++; totalCost += cost; }
+      const hasPrice = s.last_price != null && shares > 0n;
+      const value = hasPrice ? tradeGross(shares, units(s.last_price)) : null;
+      if (value != null) { priced++; totalValue += value; totalUnrealized += value - cost; }
+      const card = elem('article', null, 'holding-card'); const head = elem('div', null, 'holding-head');
+      const title = elem('div'); title.append(elem('strong', s.symbol), elem('small', s.name));
+      head.append(title, elem('span', shares ? `${shareText(shares)} หุ้น` : 'ยังไม่ถือ', 'holding-badge')); card.append(head);
+      const details = elem('div', null, 'holding-details');
+      details.append(elem('span', 'ต้นทุนที่ถือ'), elem('strong', moneyUnits(cost, currency)));
+      details.append(elem('span', 'ต้นทุนเฉลี่ย/หุ้น'), elem('strong', shares ? moneyUnits(roundDiv(cost * 10000n, shares), currency) : '—'));
+      details.append(elem('span', 'ราคาอ้างอิง'), elem('strong', s.last_price != null ? `${money(s.last_price, currency)} · ${s.price_as_of}` : 'ยังไม่ระบุ'));
+      details.append(elem('span', 'มูลค่า / กำไรที่ยังไม่ขาย'), elem('strong', value != null ? `${moneyUnits(value, currency)} / ${moneyUnits(value - cost, currency)}` : '—'));
+      details.append(elem('span', 'กำไรจากการขายแล้ว'), elem('strong', moneyUnits(realized, currency)));
+      card.append(details); holdings.append(card);
+    }
+    const metrics = [
+      ['ต้นทุนหุ้นที่ถือ', moneyUnits(totalCost, currency), `${heldCount} หุ้นที่ยังถือ`],
+      ['มูลค่าประเมิน', priced ? moneyUnits(totalValue, currency) : '—', `มีราคา ${priced}/${heldCount} หุ้นที่ถือ`],
+      ['กำไรที่ยังไม่ขาย', priced ? moneyUnits(totalUnrealized, currency) : '—', 'เฉพาะหุ้นที่มีราคาอ้างอิง'],
+      ['กำไรจากการขายแล้ว', moneyUnits(totalRealized, currency), 'ตามต้นทุนเฉลี่ยถ่วงน้ำหนัก']
+    ];
+    const box = $('portfolio-metrics'); box.replaceChildren();
+    for (const [label, value, detail] of metrics) {
+      const card = elem('div', null, 'metric-card'); card.append(elem('span', label), elem('strong', value), elem('small', detail)); box.append(card);
+    }
+    renderTradeList(); updateTradePreview();
+  }
+  function renderTradeList() {
+    const market = $('portfolio-market').value, body = $('trade-list'); body.replaceChildren();
+    $('toggle-void-trades').textContent = state.voidTrades ? 'กลับไปรายการปกติ' : 'ดูรายการที่ยกเลิก';
+    const rows = state.trades.filter(t => Boolean(t.voided_at) === state.voidTrades && security(t.security_id)?.market === market)
+      .sort((a, b) => b.traded_on.localeCompare(a.traded_on) || b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
+    if (!rows.length) { const tr = elem('tr'); const td = elem('td', 'ยังไม่มีรายการ', 'empty'); td.colSpan = 7; tr.append(td); body.append(tr); }
+    for (const t of rows) {
+      const s = security(t.security_id), tr = elem('tr');
+      tr.append(elem('td', t.traded_on), elem('td', s.symbol), elem('td', t.side === 'buy' ? 'ซื้อ' : 'ขาย'));
+      tr.append(elem('td', shareText(units(t.quantity)), 'right'), elem('td', money(t.unit_price, s.currency), 'right'));
+      const total = units(t.gross_amount) + (t.side === 'buy' ? units(t.fees) : -units(t.fees));
+      const moneyCell = elem('td', moneyUnits(total, s.currency), 'right'); moneyCell.title = `ค่าธรรมเนียม ${money(t.fees, s.currency)}${t.note ? ' · ' + t.note : ''}`;
+      tr.append(moneyCell);
+      const controls = elem('td'); const button = elem('button', state.voidTrades ? 'กู้คืน' : 'ยกเลิก', `outline small${state.voidTrades ? '' : ' danger'}`);
+      button.dataset.tradeId = t.id; controls.append(button); tr.append(controls); body.append(tr);
+    }
+  }
+  function updateTradePreview() {
+    const target = $('trade-preview'), securityId = $('trade-security').value, s = security(securityId);
+    try {
+      const quantity = units($('trade-quantity').value), price = units($('trade-price').value), fees = units($('trade-fees').value || '0');
+      if (!s || quantity <= 0n || price <= 0n || fees < 0n) throw new Error('');
+      const gross = tradeGross(quantity, price), buy = $('trade-side').value === 'buy';
+      if (!buy && fees > gross) throw new Error('ค่าธรรมเนียมเกินยอดขาย');
+      target.textContent = `${buy ? 'จ่ายรวม' : 'รับสุทธิ'} ${moneyUnits(buy ? gross + fees : gross - fees, s.currency)} · ก่อนค่าธรรมเนียม ${moneyUnits(gross, s.currency)}`;
+    } catch (error) { target.textContent = error.message || 'กรอกหุ้น จำนวน และราคาเพื่อดูยอดโดยประมาณ'; }
   }
   function fillSelect(select, items, blank, label) {
     const before = select.value;
@@ -298,6 +388,50 @@
   $('dashboard-currency').addEventListener('change', renderDashboard);
   $('dashboard-period').addEventListener('change', renderDashboard);
   $('dashboard-all').addEventListener('click', () => switchView('transactions'));
+  $('portfolio-market').addEventListener('change', renderPortfolio);
+  for (const id of ['trade-security', 'trade-side', 'trade-quantity', 'trade-price', 'trade-fees']) $(id).addEventListener('input', updateTradePreview);
+  $('toggle-void-trades').addEventListener('click', () => { state.voidTrades = !state.voidTrades; renderTradeList(); });
+  $('security-form').addEventListener('submit', async event => {
+    event.preventDefault(); if (!state.user) return; const button = event.target.querySelector('button[type="submit"]'); button.disabled = true;
+    try {
+      const market = $('portfolio-market').value, symbol = $('security-symbol').value.trim().toUpperCase(), name = $('security-name').value.trim();
+      if (!/^[A-Z0-9._^-]{1,20}$/.test(symbol)) throw new Error('สัญลักษณ์ใช้ตัวอักษรอังกฤษ ตัวเลข จุด ขีดกลาง หรือขีดล่าง');
+      if (!name) throw new Error('กรุณาใส่ชื่อหุ้น');
+      const { error } = await db.from('securities').insert({ owner_id: state.user.id, market, symbol, name, currency: market === 'SET' ? 'THB' : 'USD' });
+      if (error) throw error; event.target.reset(); await loadData(); say(`เพิ่ม ${symbol} แล้ว`);
+    } catch (error) { say(`เพิ่มหุ้นไม่สำเร็จ: ${error.message}`, true); } finally { button.disabled = false; }
+  });
+  $('price-form').addEventListener('submit', async event => {
+    event.preventDefault(); if (!state.user) return; const button = event.target.querySelector('button[type="submit"]'); button.disabled = true;
+    try {
+      const id = $('price-security').value, s = security(id); if (!s || s.market !== $('portfolio-market').value) throw new Error('กรุณาเลือกหุ้น');
+      const price = units($('latest-price').value); if (price < 0n) throw new Error('ราคาต้องไม่ติดลบ');
+      const { error } = await db.from('securities').update({ last_price: decimal(price), price_as_of: $('price-date').value }).eq('id', id);
+      if (error) throw error; await loadData(); say(`อัปเดตราคา ${s.symbol} แล้ว`);
+    } catch (error) { say(`อัปเดตราคาไม่สำเร็จ: ${error.message}`, true); } finally { button.disabled = false; }
+  });
+  $('trade-form').addEventListener('submit', async event => {
+    event.preventDefault(); if (!state.user) return; const button = event.target.querySelector('button[type="submit"]'); button.disabled = true;
+    try {
+      const securityId = $('trade-security').value, s = security(securityId); if (!s || s.market !== $('portfolio-market').value) throw new Error('กรุณาเลือกหุ้น');
+      const quantity = units(positive($('trade-quantity').value)), unitPrice = units(positive($('trade-price').value));
+      const fees = units($('trade-fees').value || '0'); if (fees < 0n) throw new Error('ค่าธรรมเนียมต้องไม่ติดลบ');
+      const gross = tradeGross(quantity, unitPrice); if (gross <= 0n) throw new Error('มูลค่าซื้อขายต้องมากกว่า 0');
+      const side = $('trade-side').value; if (side === 'sell' && fees > gross) throw new Error('ค่าธรรมเนียมขายเกินมูลค่าขาย');
+      const data = { owner_id: state.user.id, security_id: securityId, side, traded_on: $('trade-date').value, quantity: decimal(quantity), unit_price: decimal(unitPrice), fees: decimal(fees), note: $('trade-note').value.trim() };
+      portfolioModel(securityId, { ...data, id: 'zzzzzzzz', gross_amount: decimal(gross), created_at: new Date().toISOString(), voided_at: null });
+      const { error } = await db.from('investment_trades').insert(data); if (error) throw error;
+      event.target.reset(); $('trade-date').value = today(); $('trade-fees').value = '0'; await loadData(); say('บันทึกรายการหุ้นแล้ว');
+    } catch (error) { say(`บันทึกรายการหุ้นไม่สำเร็จ: ${error.message}`, true); } finally { button.disabled = false; }
+  });
+  $('trade-list').addEventListener('click', async event => {
+    const button = event.target.closest('[data-trade-id]'); if (!button) return;
+    const t = state.trades.find(x => x.id === button.dataset.tradeId); if (!t) return; button.disabled = true;
+    const { error } = await db.from('investment_trades').update({ voided_at: t.voided_at ? null : new Date().toISOString() }).eq('id', t.id);
+    if (error) say(`เปลี่ยนสถานะรายการหุ้นไม่สำเร็จ: ${error.message}`, true);
+    else { await loadData(); say(t.voided_at ? 'กู้คืนรายการหุ้นแล้ว' : 'ยกเลิกรายการหุ้นแล้ว กู้คืนได้'); }
+    button.disabled = false;
+  });
   $('quick-add').addEventListener('click', () => { switchView('transactions'); $('transaction-form').scrollIntoView({ behavior: 'smooth' }); $('transaction-amount').focus(); });
   $('transaction-kind').addEventListener('change', updateKind);
   $('gross-amount').addEventListener('input', updateNet); $('withheld-tax').addEventListener('input', updateNet);
@@ -368,4 +502,5 @@
     state.editNote = note.id; $('note-title').value = note.title; $('note-body').value = note.body; $('note-transaction').value = note.transaction_id || ''; $('note-form-title').textContent = 'แก้ไขบันทึก'; visible('cancel-note-edit', true); $('note-form').scrollIntoView({ behavior: 'smooth' });
   });
   resetTransaction();
+  $('trade-date').value = today(); $('price-date').value = today();
 })();
