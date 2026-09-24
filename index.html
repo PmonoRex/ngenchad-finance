@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#17373c">
+  <title>เงินชัด — บันทึกการเงินส่วนตัว</title>
+  <link rel="stylesheet" href="style.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script defer src="config.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="top"><div><span class="eyebrow">PERSONAL FINANCE</span><h1>เงิน<span>ชัด</span></h1><p>บันทึกเร็ว เห็นยอดจริง ตรวจย้อนหลังได้</p></div><div class="top-right"><span class="pill" id="status">กำลังตรวจการตั้งค่า</span><button class="outline" id="signout" hidden>ออกจากระบบ</button></div></header>
+    <section class="card narrow" id="setup" hidden><h2>เชื่อมฐานข้อมูล</h2><p>กรุณาตรวจ <code>config.js</code> และการเชื่อมต่อ Supabase</p></section>
+    <section class="card narrow" id="login" hidden><h2>เข้าสู่ระบบ</h2><p>ข้อมูลการเงินจะแสดงหลังเข้าสู่ระบบเท่านั้น</p><form id="login-form"><label>อีเมล<input id="email" type="email" autocomplete="username" required></label><label>รหัสผ่าน<input id="password" type="password" autocomplete="current-password" required></label><button type="submit">เข้าสู่ระบบ</button></form><p class="message" id="login-message" role="status"></p></section>
+    <section id="workspace" hidden>
+      <div class="welcome"><div><span class="eyebrow">PRIVATE WORKSPACE</span><h2 id="view-title">รายการเงิน</h2><p id="user-email"></p></div><button class="primary" id="quick-add">+ บันทึกรายการ</button></div>
+      <nav class="tabs" aria-label="หน้าในเว็บ"><button class="tab active" data-view="transactions">รายการเงิน</button><button class="tab" data-view="accounts">บัญชีและหมวด</button><button class="tab" data-view="notes">บันทึก</button></nav>
+      <p class="message" id="workspace-message" role="status"></p>
+      <section class="view active" id="transactions-view">
+        <div class="balance-grid" id="balance-cards"></div>
+        <div class="grid main-grid">
+          <section class="card"><div class="section-head"><div><h3 id="transaction-form-title">บันทึกรายการใหม่</h3><p>กรอกเฉพาะข้อมูลที่จำเป็น แล้วกดบันทึก</p></div></div>
+            <form id="transaction-form"><div class="form-row"><label>ประเภท<select id="transaction-kind"><option value="expense">รายจ่าย</option><option value="income">รายรับ</option><option value="transfer">โอนเงิน</option></select></label><label>วันที่<input id="transaction-date" type="date" required></label></div>
+              <label id="account-label">บัญชีที่จ่าย<select id="transaction-account" required></select></label>
+              <label id="to-account-wrap" hidden>บัญชีปลายทาง<select id="transaction-to-account"></select></label>
+              <label id="category-wrap">หมวด<select id="transaction-category"></select></label>
+              <div id="income-fields" hidden><div class="form-row"><label>ที่มารายได้<select id="income-source"><option value="salary">เงินเดือน</option><option value="freelance">งานเสริม</option><option value="dividend">ปันผล</option><option value="other">อื่น ๆ</option></select></label><label>รายได้ก่อนหัก<input id="gross-amount" type="number" min="0.0001" step="0.0001" inputmode="decimal"></label></div><label>ภาษีหัก ณ ที่จ่าย<input id="withheld-tax" type="number" min="0" step="0.0001" value="0" inputmode="decimal"></label></div>
+              <div class="form-row"><label id="amount-label">จำนวนเงิน<input id="transaction-amount" type="number" min="0.0001" step="0.0001" inputmode="decimal" required></label><label id="received-wrap" hidden>ยอดเข้าบัญชีปลายทาง<input id="received-amount" type="number" min="0.0001" step="0.0001" inputmode="decimal"></label></div>
+              <label>รายละเอียด<input id="transaction-description" maxlength="500" placeholder="เช่น อาหารกลางวัน"></label>
+              <div class="form-actions"><button type="button" class="outline" id="cancel-edit" hidden>ยกเลิกการแก้ไข</button><button type="button" class="outline" id="save-template">☆ บันทึกเป็นรายการโปรด</button><button type="submit" id="save-transaction">บันทึกรายการ</button></div>
+            </form>
+          </section>
+          <section class="card"><h3>รายการโปรด</h3><p>กดเพื่อเติมแบบฟอร์มทันที</p><div id="templates" class="templates"><span class="muted">ยังไม่มีรายการโปรด</span></div><div class="rule"></div><h3>วิธีนับยอด</h3><p class="muted">รายรับเพิ่มเงินในบัญชี รายจ่ายลดเงิน การโอนย้ายยอดระหว่างบัญชีโดยไม่เพิ่มรายรับหรือรายจ่าย</p></section>
+        </div>
+        <section class="card"><div class="section-head"><div><h3>ประวัติรายการ</h3><p id="transaction-count"></p></div><button class="outline small" id="toggle-trash">ดูรายการที่ลบ</button></div><div class="toolbar"><input id="search" placeholder="ค้นหารายละเอียดหรือหมวด" aria-label="ค้นหารายการ"><select id="kind-filter" aria-label="กรองประเภท"><option value="all">ทุกประเภท</option><option value="income">รายรับ</option><option value="expense">รายจ่าย</option><option value="transfer">โอนเงิน</option></select></div><div class="table-wrap"><table><thead><tr><th>วันที่</th><th>รายการ</th><th>บัญชี</th><th class="right">จำนวน</th><th>จัดการ</th></tr></thead><tbody id="transaction-list"></tbody></table></div></section>
+      </section>
+      <section class="view" id="accounts-view"><div class="grid"><section class="card"><h3>เพิ่มบัญชีเงิน</h3><form id="account-form"><label>ชื่อบัญชี<input id="account-name" maxlength="100" placeholder="เช่น บัญชีหลัก" required></label><div class="form-row"><label>ประเภท<select id="account-kind"><option value="bank">ธนาคาร</option><option value="cash">เงินสด</option><option value="broker">บัญชีลงทุน</option></select></label><label>สกุลเงิน<select id="account-currency"><option value="THB">THB</option><option value="USD">USD</option></select></label></div><label>ยอดตั้งต้น<input id="opening-balance" type="number" step="0.0001" value="0" required></label><button type="submit">เพิ่มบัญชี</button></form></section><section class="card"><h3>บัญชีของฉัน</h3><div id="accounts" class="stack"></div></section></div><div class="grid"><section class="card"><h3>เพิ่มหมวด</h3><form id="category-form"><label>ชื่อหมวด<input id="category-name" maxlength="100" placeholder="เช่น อาหาร" required></label><label>ประเภท<select id="category-flow"><option value="expense">รายจ่าย</option><option value="income">รายรับ</option></select></label><button type="submit">เพิ่มหมวด</button></form></section><section class="card"><h3>หมวดที่ใช้</h3><div id="categories" class="chips"></div></section></div></section>
+      <section class="view" id="notes-view"><div class="grid"><section class="card"><h3 id="note-form-title">เพิ่มบันทึก</h3><form id="note-form"><label>หัวข้อ<input id="note-title" maxlength="160" required></label><label>รายละเอียด<textarea id="note-body" rows="6"></textarea></label><label>ผูกกับรายการเงิน<select id="note-transaction"><option value="">ไม่ผูกกับรายการ</option></select></label><div class="form-actions"><button type="button" class="outline" id="cancel-note-edit" hidden>ยกเลิกการแก้ไข</button><button type="submit">บันทึกโน้ต</button></div></form></section><section class="card"><h3>บันทึกของฉัน</h3><div id="notes" class="stack"></div></section></div></section>
+    </section>
+  </main>
+</body>
+</html>
