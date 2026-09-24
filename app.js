@@ -252,8 +252,9 @@
   function updateTradePreview() {
     const target = $('trade-preview'), securityId = $('trade-security').value, s = security(securityId);
     try {
+      if (!s || !$('trade-quantity').value || !$('trade-price').value) throw new Error('');
       const quantity = units($('trade-quantity').value), price = units($('trade-price').value), fees = units($('trade-fees').value || '0');
-      if (!s || quantity <= 0n || price <= 0n || fees < 0n) throw new Error('');
+      if (quantity <= 0n || price <= 0n || fees < 0n) throw new Error('');
       const gross = tradeGross(quantity, price), buy = $('trade-side').value === 'buy';
       if (!buy && fees > gross) throw new Error('ค่าธรรมเนียมเกินยอดขาย');
       target.textContent = `${buy ? 'จ่ายรวม' : 'รับสุทธิ'} ${moneyUnits(buy ? gross + fees : gross - fees, s.currency)} · ก่อนค่าธรรมเนียม ${moneyUnits(gross, s.currency)}`;
