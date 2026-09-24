@@ -31,6 +31,7 @@
     const frac = String(v % 10000n).padStart(4, '0').replace(/0+$/, '');
     return `${sign}${whole}${frac ? '.' + frac : ''} ${currency}`;
   }
+  const moneyUnits = (value, currency) => money(decimal(value), currency);
   function positive(raw) { const n = units(raw); if (n <= 0n) throw new Error('จำนวนเงินต้องมากกว่า 0'); return decimal(n); }
   function account(id) { return state.accounts.find(a => a.id === id); }
   function category(id) { return state.categories.find(c => c.id === id); }
@@ -73,15 +74,101 @@
     else { Object.assign(state, { accounts: [], balances: [], categories: [], transactions: [], notes: [], templates: [] }); say(''); }
   }
   function switchView(view) {
-    for (const name of ['transactions', 'accounts', 'notes']) {
+    for (const name of ['dashboard', 'transactions', 'accounts', 'notes']) {
       $(`${name}-view`).classList.toggle('active', name === view);
       document.querySelector(`[data-view="${name}"]`).classList.toggle('active', name === view);
     }
-    $('view-title').textContent = { transactions: 'รายการเงิน', accounts: 'บัญชีและหมวด', notes: 'บันทึก' }[view];
+    $('view-title').textContent = { dashboard: 'ภาพรวมการเงิน', transactions: 'รายการเงิน', accounts: 'บัญชีและหมวด', notes: 'บันทึก' }[view];
     say('');
   }
 
-  function renderAll() { renderAccounts(); renderCategories(); renderTransactions(); renderTemplates(); renderNotes(); }
+  function renderAll() { renderDashboard(); renderAccounts(); renderCategories(); renderTransactions(); renderTemplates(); renderNotes(); }
+  function dashboardCurrency(t) {
+    const id = t.kind === 'income' ? t.to_account_id : t.from_account_id;
+    return account(id)?.currency;
+  }
+  function dashboardMonths(count) {
+    const now = new Date();
+    return Array.from({ length: count }, (_, index) => {
+      const date = new Date(now.getFullYear(), now.getMonth() - count + index + 1, 1);
+      return { key: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`, label: date.toLocaleDateString('th-TH', { month: 'short', year: '2-digit' }), income: 0n, expense: 0n };
+    });
+  }
+  function dashboardBar(label, value, maximum, currency, tone) {
+    const row = elem('div', null, 'dashboard-breakdown-row');
+    const head = elem('div', null, 'breakdown-head');
+    head.append(elem('span', label), elem('strong', moneyUnits(value, currency)));
+    const track = elem('div', null, 'breakdown-track');
+    const fill = elem('span', null, tone);
+    fill.style.width = `${maximum ? Number(value * 100n / maximum) : 0}%`;
+    track.append(fill); row.append(head, track); return row;
+  }
+  function renderDashboard() {
+    const currency = $('dashboard-currency').value;
+    const months = dashboardMonths(Number($('dashboard-period').value));
+    const byMonth = new Map(months.map(m => [m.key, m]));
+    const categories = new Map(); const sources = new Map();
+    let income = 0n, expense = 0n, withheld = 0n, gross = 0n;
+    const recent = [];
+    for (const t of activeTransactions()) {
+      if (dashboardCurrency(t) !== currency || !byMonth.has(t.occurred_on.slice(0, 7))) continue;
+      if (t.kind === 'transfer') continue;
+      const value = units(t.amount); const bucket = byMonth.get(t.occurred_on.slice(0, 7));
+      if (t.kind === 'income') {
+        income += value; bucket.income += value;
+        withheld += units(t.withheld_tax_amount || '0'); gross += units(t.gross_amount || t.amount);
+        const key = t.income_source || 'other'; sources.set(key, (sources.get(key) || 0n) + value);
+      } else if (t.kind === 'expense') {
+        expense += value; bucket.expense += value;
+        const key = category(t.category_id)?.name || 'ไม่ระบุหมวด'; categories.set(key, (categories.get(key) || 0n) + value);
+      }
+      recent.push(t);
+    }
+    let balance = 0n;
+    for (const a of state.accounts.filter(a => !a.archived_at && a.currency === currency)) {
+      balance += units(state.balances.find(b => b.account_id === a.id)?.balance ?? a.opening_balance);
+    }
+    const metrics = [
+      ['ยอดรวมบัญชี', balance, 'ยอดปัจจุบันของบัญชีสกุลนี้'],
+      ['รายรับสุทธิ', income, 'หลังหักภาษี ณ ที่จ่าย'],
+      ['รายจ่าย', expense, 'ไม่รวมเงินโอน'],
+      ['เงินคงเหลือจากรายการ', income - expense, 'รายรับสุทธิ − รายจ่าย']
+    ];
+    const cards = $('dashboard-metrics'); cards.replaceChildren();
+    for (const [label, value, detail] of metrics) {
+      const card = elem('div', null, 'metric-card');
+      card.append(elem('span', label), elem('strong', moneyUnits(value, currency)), elem('small', detail)); cards.append(card);
+    }
+    const chart = $('dashboard-chart'); chart.replaceChildren();
+    chart.style.gridTemplateColumns = `repeat(${months.length}, minmax(0, 1fr))`;
+    const max = months.reduce((m, x) => [m, x.income, x.expense].reduce((a, b) => a > b ? a : b), 0n);
+    for (const month of months) {
+      const column = elem('div', null, 'chart-month'); const bars = elem('div', null, 'chart-bars');
+      for (const [kind, value] of [['income', month.income], ['expense', month.expense]]) {
+        const bar = elem('div', null, `chart-bar ${kind}`);
+        bar.style.height = `${value ? Math.max(3, Number(value * 100n / max)) : 0}%`;
+        bar.title = `${month.label} ${kind === 'income' ? 'รายรับสุทธิ' : 'รายจ่าย'} ${moneyUnits(value, currency)}`;
+        bars.append(bar);
+      }
+      column.append(bars, elem('span', month.label)); chart.append(column);
+    }
+    chart.setAttribute('aria-label', months.map(m => `${m.label}: รายรับ ${moneyUnits(m.income, currency)}, รายจ่าย ${moneyUnits(m.expense, currency)}`).join('; '));
+    const expenseBox = $('dashboard-categories'); expenseBox.replaceChildren();
+    if (!categories.size) expenseBox.append(elem('p', 'ยังไม่มีรายจ่ายในช่วงเวลานี้', 'empty'));
+    else for (const [label, value] of [...categories].sort((a, b) => a[1] > b[1] ? -1 : a[1] < b[1] ? 1 : 0).slice(0, 6)) expenseBox.append(dashboardBar(label, value, expense, currency, 'expense-fill'));
+    const incomeBox = $('dashboard-sources'); incomeBox.replaceChildren();
+    if (!sources.size) incomeBox.append(elem('p', 'ยังไม่มีรายรับในช่วงเวลานี้', 'empty'));
+    else for (const [key, value] of [...sources].sort((a, b) => a[1] > b[1] ? -1 : a[1] < b[1] ? 1 : 0)) incomeBox.append(dashboardBar(sourceNames[key] || sourceNames.other, value, income, currency, 'income-fill'));
+    $('dashboard-tax').textContent = income ? `รายได้ก่อนหัก ${moneyUnits(gross, currency)} · ภาษีหัก ณ ที่จ่าย ${moneyUnits(withheld, currency)}` : '';
+    const recentBox = $('dashboard-recent'); recentBox.replaceChildren();
+    recent.sort((a, b) => b.occurred_on.localeCompare(a.occurred_on) || b.created_at.localeCompare(a.created_at));
+    if (!recent.length) recentBox.append(elem('p', 'ยังไม่มีรายการในช่วงเวลานี้', 'empty'));
+    for (const t of recent.slice(0, 5)) {
+      const row = elem('div', null, 'recent-row'); const detail = elem('div');
+      detail.append(elem('strong', t.description || category(t.category_id)?.name || kindNames[t.kind]), elem('small', `${t.occurred_on} · ${kindNames[t.kind]}`));
+      row.append(detail, elem('strong', `${t.kind === 'income' ? '+' : '−'}${money(t.amount, currency)}`, t.kind === 'income' ? 'positive' : 'negative')); recentBox.append(row);
+    }
+  }
   function fillSelect(select, items, blank, label) {
     const before = select.value;
     select.replaceChildren();
@@ -208,6 +295,9 @@
   db.auth.getUser().then(({ data, error }) => showAuth(error ? null : data.user)).catch(() => { visible('login', true); $('login-message').textContent = 'เชื่อม Supabase ไม่สำเร็จ'; });
 
   document.querySelectorAll('[data-view]').forEach(b => b.addEventListener('click', () => switchView(b.dataset.view)));
+  $('dashboard-currency').addEventListener('change', renderDashboard);
+  $('dashboard-period').addEventListener('change', renderDashboard);
+  $('dashboard-all').addEventListener('click', () => switchView('transactions'));
   $('quick-add').addEventListener('click', () => { switchView('transactions'); $('transaction-form').scrollIntoView({ behavior: 'smooth' }); $('transaction-amount').focus(); });
   $('transaction-kind').addEventListener('change', updateKind);
   $('gross-amount').addEventListener('input', updateNet); $('withheld-tax').addEventListener('input', updateNet);

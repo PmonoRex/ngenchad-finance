@@ -16,10 +16,16 @@
     <section class="card narrow" id="setup" hidden><h2>เชื่อมฐานข้อมูล</h2><p>กรุณาตรวจ <code>config.js</code> และการเชื่อมต่อ Supabase</p></section>
     <section class="card narrow" id="login" hidden><h2>เข้าสู่ระบบ</h2><p>ข้อมูลการเงินจะแสดงหลังเข้าสู่ระบบเท่านั้น</p><form id="login-form"><label>อีเมล<input id="email" type="email" autocomplete="username" required></label><label>รหัสผ่าน<input id="password" type="password" autocomplete="current-password" required></label><button type="submit">เข้าสู่ระบบ</button></form><p class="message" id="login-message" role="status"></p></section>
     <section id="workspace" hidden>
-      <div class="welcome"><div><span class="eyebrow">PRIVATE WORKSPACE</span><h2 id="view-title">รายการเงิน</h2><p id="user-email"></p></div><button class="primary" id="quick-add">+ บันทึกรายการ</button></div>
-      <nav class="tabs" aria-label="หน้าในเว็บ"><button class="tab active" data-view="transactions">รายการเงิน</button><button class="tab" data-view="accounts">บัญชีและหมวด</button><button class="tab" data-view="notes">บันทึก</button></nav>
+      <div class="welcome"><div><span class="eyebrow">PRIVATE WORKSPACE</span><h2 id="view-title">ภาพรวมการเงิน</h2><p id="user-email"></p></div><button class="primary" id="quick-add">+ บันทึกรายการ</button></div>
+      <nav class="tabs" aria-label="หน้าในเว็บ"><button class="tab active" data-view="dashboard">ภาพรวม</button><button class="tab" data-view="transactions">รายการเงิน</button><button class="tab" data-view="accounts">บัญชีและหมวด</button><button class="tab" data-view="notes">บันทึก</button></nav>
       <p class="message" id="workspace-message" role="status"></p>
-      <section class="view active" id="transactions-view">
+      <section class="view active" id="dashboard-view">
+        <div class="dashboard-controls"><p>สรุปจากรายการที่บันทึกจริง · ไม่นับรายการโอนและรายการที่ลบ</p><div class="dashboard-filters"><label>สกุลเงิน<select id="dashboard-currency"><option value="THB">THB</option><option value="USD">USD</option></select></label><label>ช่วงเวลา<select id="dashboard-period"><option value="3">3 เดือน</option><option value="6" selected>6 เดือน</option><option value="12">12 เดือน</option></select></label></div></div>
+        <div class="dashboard-metrics" id="dashboard-metrics"></div>
+        <div class="grid dashboard-grid"><section class="card"><div class="section-head"><div><h3>รายรับและรายจ่ายรายเดือน</h3><p>รายรับเป็นยอดหลังหักภาษี</p></div></div><div id="dashboard-chart" class="dashboard-chart" role="img" aria-label="กราฟรายรับและรายจ่ายรายเดือน"></div><div class="chart-legend"><span><i class="income-dot"></i> รายรับสุทธิ</span><span><i class="expense-dot"></i> รายจ่าย</span></div></section><section class="card"><h3>รายจ่ายตามหมวด</h3><div id="dashboard-categories" class="dashboard-categories"></div></section></div>
+        <div class="grid dashboard-grid"><section class="card"><h3>ที่มารายรับ</h3><div id="dashboard-sources" class="dashboard-categories"></div><p class="muted" id="dashboard-tax"></p></section><section class="card"><div class="section-head"><h3>รายการล่าสุด</h3><button class="outline small" id="dashboard-all">ดูทั้งหมด</button></div><div id="dashboard-recent" class="dashboard-recent"></div></section></div>
+      </section>
+      <section class="view" id="transactions-view">
         <div class="balance-grid" id="balance-cards"></div>
         <div class="grid main-grid">
           <section class="card"><div class="section-head"><div><h3 id="transaction-form-title">บันทึกรายการใหม่</h3><p>กรอกเฉพาะข้อมูลที่จำเป็น แล้วกดบันทึก</p></div></div>
