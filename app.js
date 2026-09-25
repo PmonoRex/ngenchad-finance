@@ -57,7 +57,7 @@
         allRows('accounts', 'id,name,kind,currency,opening_balance,created_at,archived_at', q => q.order('created_at', { ascending: true })),
         allRows('account_balances', 'account_id,owner_id,currency,balance'),
         allRows('categories', 'id,name,flow', q => q.order('name')),
-        allRows('cash_transactions', 'id,kind,occurred_on,from_account_id,to_account_id,category_id,amount,received_amount,description,gross_amount,withheld_tax_amount,income_source,deleted_at,created_at', q => q.order('occurred_on', { ascending: false }).order('created_at', { ascending: false })),
+        allRows('cash_transactions', 'id,kind,occurred_on,from_account_id,to_account_id,category_id,amount,received_amount,description,gross_amount,withheld_tax_amount,income_source,source_fingerprint,deleted_at,created_at', q => q.order('occurred_on', { ascending: false }).order('created_at', { ascending: false })),
         allRows('notes', 'id,title,body,transaction_id,created_at', q => q.order('created_at', { ascending: false })),
         allRows('quick_templates', 'id,name,kind,account_id,category_id,amount,description,income_source,gross_amount,withheld_tax_amount,created_at', q => q.order('created_at', { ascending: false })),
         allRows('securities', 'id,market,symbol,name,currency,last_price,price_as_of,created_at', q => q.order('market').order('symbol')),
@@ -425,6 +425,95 @@
     } catch (error) { receiptStatus(error.message || 'อ่านเอกสารไม่สำเร็จ', true); }
     finally { receiptBusy = false; $('receipt-file').disabled = false; }
   }
+  let pendingCashSlip = null;
+  let cashSlipBusy = false;
+  const cashSlipStatus = (message, error = false) => { $('cash-slip-status').textContent = message; $('cash-slip-status').classList.toggle('error', error); };
+  function cashSlipAccounts(bank) {
+    const live = state.accounts.filter(a => !a.archived_at && a.currency === 'THB');
+    if (bank === 'dime') return live.filter(a => /dime/i.test(a.name));
+    if (bank === 'kbank') return live.filter(a => /kbank|กสิกร|make/i.test(a.name));
+    return [];
+  }
+  function updateCashSlipKind() {
+    const kind = $('cash-slip-kind').value;
+    $('cash-slip-account-label').firstChild.textContent = kind === 'income' ? 'บัญชีที่รับเงิน' : 'บัญชีที่จ่าย';
+    visible('cash-slip-to-wrap', kind === 'transfer'); visible('cash-slip-category-wrap', kind !== 'transfer'); visible('cash-slip-income-wrap', kind === 'income');
+    fillSelect($('cash-slip-category'), state.categories.filter(c => c.flow === kind), 'ไม่ระบุหมวด', c => c.name);
+  }
+  function fillCashSlipReview(parsed) {
+    $('cash-slip-kind').value = parsed.kind;
+    $('cash-slip-date').value = parsed.date;
+    $('cash-slip-amount').value = parsed.amount;
+    $('cash-slip-description').value = parsed.description;
+    $('cash-slip-ocr-text').textContent = parsed.text;
+    const live = state.accounts.filter(a => !a.archived_at && a.currency === 'THB');
+    fillSelect($('cash-slip-account'), live, 'เลือกบัญชี THB', a => a.name);
+    fillSelect($('cash-slip-to-account'), live, 'เลือกบัญชี THB', a => a.name);
+    const matches = cashSlipAccounts(parsed.bank);
+    if (matches.length === 1) $('cash-slip-account').value = matches[0].id;
+    updateCashSlipKind();
+    $('cash-slip-review').hidden = false;
+  }
+  function cashSlipFormData() {
+    return { kind: $('cash-slip-kind').value, occurred_on: $('cash-slip-date').value,
+      amount: $('cash-slip-amount').value, accountId: $('cash-slip-account').value,
+      toAccountId: $('cash-slip-to-account').value, categoryId: $('cash-slip-category').value,
+      description: $('cash-slip-description').value.trim(), incomeSource: $('cash-slip-income-source').value };
+  }
+  async function saveCashSlip(data, fingerprint, auto = false) {
+    if (!state.user) throw new Error('กรุณาเข้าสู่ระบบก่อน');
+    if (!['expense', 'income', 'transfer'].includes(data.kind)) throw new Error('กรุณาตรวจประเภท');
+    if (!/^20\d{2}-\d{2}-\d{2}$/.test(data.occurred_on)) throw new Error('กรุณาตรวจวันที่');
+    const amount = positive(data.amount);
+    const source = account(data.accountId);
+    if (!source || source.archived_at || source.currency !== 'THB') throw new Error('กรุณาเลือกบัญชีเงินบาท');
+    const destination = data.kind === 'transfer' ? account(data.toAccountId) : null;
+    if (data.kind === 'transfer' && (!destination || destination.archived_at || destination.currency !== 'THB' || destination.id === source.id)) throw new Error('กรุณาเลือกบัญชีปลายทางเงินบาทที่ต่างกัน');
+    if (!data.description || data.description.length > 500) throw new Error('กรุณาตรวจรายละเอียด');
+    if (data.kind === 'income' && !['salary', 'freelance', 'dividend', 'other'].includes(data.incomeSource)) throw new Error('กรุณาเลือกที่มารายได้');
+    if (auto && data.kind !== 'expense') throw new Error('ต้องตรวจรายการก่อนบันทึก');
+    if (state.transactions.some(t => t.source_fingerprint === fingerprint)) throw new Error('สลิปนี้เคยบันทึกแล้ว');
+    if (state.transactions.some(t => !t.deleted_at && t.kind === data.kind && t.occurred_on === data.occurred_on && units(t.amount) === units(amount) && (t.from_account_id || t.to_account_id) === source.id && t.description === data.description)) throw new Error('พบรายการวัน ยอด บัญชี และรายละเอียดตรงกันแล้ว กรุณาตรวจประวัติ');
+    const row = { owner_id: state.user.id, kind: data.kind, occurred_on: data.occurred_on, amount,
+      description: data.description, category_id: data.kind === 'transfer' ? null : data.categoryId || null,
+      from_account_id: data.kind === 'income' ? null : source.id,
+      to_account_id: data.kind === 'income' ? source.id : data.kind === 'transfer' ? destination.id : null,
+      received_amount: data.kind === 'transfer' ? amount : null,
+      gross_amount: data.kind === 'income' ? amount : null, withheld_tax_amount: '0',
+      income_source: data.kind === 'income' ? data.incomeSource : null, source_fingerprint: fingerprint };
+    const result = await db.from('cash_transactions').insert(row);
+    if (result.error) throw result.error;
+    $('cash-slip-file').value = ''; $('cash-slip-review').hidden = true; pendingCashSlip = null;
+    await loadData();
+    cashSlipStatus(`บันทึก${kindNames[data.kind]} ${money(amount)} วันที่ ${data.occurred_on} แล้ว`);
+    say('บันทึกรายการจากสลิปแล้ว');
+  }
+  async function importCashSlip(file) {
+    if (!file || cashSlipBusy) return;
+    cashSlipBusy = true; $('cash-slip-file').disabled = true; $('cash-slip-review').hidden = true; pendingCashSlip = null;
+    try {
+      if (file.size > 15 * 1024 * 1024) throw new Error('ไฟล์ต้องไม่เกิน 15 MB');
+      cashSlipStatus('กำลังเตรียมสลิป…');
+      const fingerprint = await fileFingerprint(file);
+      if (state.transactions.some(t => t.source_fingerprint === fingerprint)) throw new Error('สลิปนี้เคยบันทึกแล้ว');
+      const image = await receiptImage(file);
+      cashSlipStatus('กำลังอ่านตัวอักษรบนเครื่องของคุณ…');
+      const tesseract = await loadExternalScript('https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js', 'Tesseract');
+      const worker = await tesseract.createWorker(['tha', 'eng'], 1, { logger: m => { if (m.status === 'recognizing text') cashSlipStatus(`กำลังอ่านสลิป ${Math.round((m.progress || 0) * 100)}%…`); } });
+      let ocr;
+      try { ocr = (await worker.recognize(image)).data; } finally { await worker.terminate(); }
+      const parsed = window.CashSlip.parse(ocr.text);
+      pendingCashSlip = { fingerprint, parsed };
+      fillCashSlipReview(parsed);
+      const matches = cashSlipAccounts(parsed.bank);
+      if (parsed.ready && ocr.confidence >= 60 && matches.length === 1) {
+        cashSlipStatus('ข้อมูลครบ กำลังบันทึก…');
+        try { await saveCashSlip(cashSlipFormData(), fingerprint, true); return; }
+        catch (error) { cashSlipStatus(`${error.message} ตรวจข้อมูลด้านล่างก่อนบันทึก`, true); }
+      } else cashSlipStatus(`ต้องตรวจข้อมูลก่อนบันทึก: ${[...parsed.warnings, ...(matches.length === 1 ? [] : ['เลือกบัญชีที่ตรงกับสลิป']), ...(ocr.confidence >= 60 ? [] : ['ตัวอักษรอ่านไม่ชัด'])].join(' · ') || 'กรุณาตรวจสลิป'}`, true);
+    } catch (error) { cashSlipStatus(error.message || 'อ่านสลิปไม่สำเร็จ', true); }
+    finally { cashSlipBusy = false; $('cash-slip-file').disabled = false; }
+  }
   const thb = n => moneyUnits(n, 'THB');
   const minBig = (a, b) => a < b ? a : b;
   const maxBig = (a, b) => a > b ? a : b;
@@ -699,6 +788,15 @@
     const button = event.target.querySelector('button[type="submit"]'); button.disabled = true;
     try { await saveImportedTrade(receiptFormData(), pendingReceipt.fingerprint); }
     catch (error) { receiptStatus(`บันทึกไม่สำเร็จ: ${error.message}`, true); }
+    finally { button.disabled = false; }
+  });
+  $('cash-slip-file').addEventListener('change', event => { void importCashSlip(event.target.files[0]); });
+  $('cash-slip-kind').addEventListener('change', updateCashSlipKind);
+  $('cash-slip-review').addEventListener('submit', async event => {
+    event.preventDefault(); if (!pendingCashSlip || cashSlipBusy) return;
+    const button = event.target.querySelector('button[type="submit"]'); button.disabled = true;
+    try { await saveCashSlip(cashSlipFormData(), pendingCashSlip.fingerprint); }
+    catch (error) { cashSlipStatus(`บันทึกไม่สำเร็จ: ${error.message}`, true); }
     finally { button.disabled = false; }
   });
   for (const id of ['trade-security', 'trade-side', 'trade-quantity', 'trade-price', 'trade-fees']) $(id).addEventListener('input', updateTradePreview);
