@@ -1,7 +1,7 @@
 (() => {
   const $ = id => document.getElementById(id);
   const config = window.APP_CONFIG || {};
-  const state = { user: null, accounts: [], balances: [], categories: [], transactions: [], notes: [], templates: [], securities: [], trades: [], editTransaction: null, editNote: null, trash: false, voidTrades: false };
+  const state = { user: null, accounts: [], balances: [], categories: [], transactions: [], notes: [], templates: [], securities: [], trades: [], taxProfiles: [], editTransaction: null, editNote: null, trash: false, voidTrades: false };
   const sourceNames = { salary: 'เงินเดือน', freelance: 'งานเสริม', dividend: 'ปันผล', other: 'รายรับอื่น' };
   const kindNames = { income: 'รายรับ', expense: 'รายจ่าย', transfer: 'โอนเงิน' };
   const visible = (id, yes) => { $(id).hidden = !yes; };
@@ -53,7 +53,7 @@
   }
   async function loadData() {
     try {
-      const [accounts, balances, categories, transactions, notes, templates, securities, trades] = await Promise.all([
+      const [accounts, balances, categories, transactions, notes, templates, securities, trades, taxProfiles] = await Promise.all([
         allRows('accounts', 'id,name,kind,currency,opening_balance,created_at,archived_at', q => q.order('created_at', { ascending: true })),
         allRows('account_balances', 'account_id,owner_id,currency,balance'),
         allRows('categories', 'id,name,flow', q => q.order('name')),
@@ -61,9 +61,10 @@
         allRows('notes', 'id,title,body,transaction_id,created_at', q => q.order('created_at', { ascending: false })),
         allRows('quick_templates', 'id,name,kind,account_id,category_id,amount,description,income_source,gross_amount,withheld_tax_amount,created_at', q => q.order('created_at', { ascending: false })),
         allRows('securities', 'id,market,symbol,name,currency,last_price,price_as_of,created_at', q => q.order('market').order('symbol')),
-        allRows('investment_trades', 'id,security_id,side,traded_on,quantity,unit_price,gross_amount,fees,note,voided_at,created_at', q => q.order('traded_on', { ascending: false }).order('created_at', { ascending: false }))
+        allRows('investment_trades', 'id,security_id,side,traded_on,quantity,unit_price,gross_amount,fees,note,voided_at,created_at', q => q.order('traded_on', { ascending: false }).order('created_at', { ascending: false })),
+        allRows('tax_profiles', 'tax_year,freelance_mode,freelance_expense,dividend_mode,other_deductions,forecast_salary,forecast_freelance')
       ]);
-      Object.assign(state, { accounts, balances, categories, transactions, notes, templates, securities, trades });
+      Object.assign(state, { accounts, balances, categories, transactions, notes, templates, securities, trades, taxProfiles });
       renderAll();
     } catch (error) { say(`โหลดข้อมูลไม่สำเร็จ: ${error.message}`, true); }
   }
@@ -73,18 +74,18 @@
     $('status').textContent = user ? 'ข้อมูลส่วนตัว' : 'เข้าสู่ระบบเพื่อดูข้อมูล';
     $('user-email').textContent = user?.email || '';
     if (user) void loadData();
-    else { Object.assign(state, { accounts: [], balances: [], categories: [], transactions: [], notes: [], templates: [], securities: [], trades: [] }); say(''); }
+    else { Object.assign(state, { accounts: [], balances: [], categories: [], transactions: [], notes: [], templates: [], securities: [], trades: [], taxProfiles: [] }); say(''); }
   }
   function switchView(view) {
-    for (const name of ['dashboard', 'transactions', 'portfolio', 'accounts', 'notes']) {
+    for (const name of ['dashboard', 'transactions', 'portfolio', 'tax', 'accounts', 'notes']) {
       $(`${name}-view`).classList.toggle('active', name === view);
       document.querySelector(`[data-view="${name}"]`).classList.toggle('active', name === view);
     }
-    $('view-title').textContent = { dashboard: 'ภาพรวมการเงิน', transactions: 'รายการเงิน', portfolio: 'พอร์ตหุ้น', accounts: 'บัญชีและหมวด', notes: 'บันทึก' }[view];
+    $('view-title').textContent = { dashboard: 'ภาพรวมการเงิน', transactions: 'รายการเงิน', portfolio: 'พอร์ตหุ้น', tax: 'ประมาณการภาษี', accounts: 'บัญชีและหมวด', notes: 'บันทึก' }[view];
     say('');
   }
 
-  function renderAll() { renderDashboard(); renderPortfolio(); renderAccounts(); renderCategories(); renderTransactions(); renderTemplates(); renderNotes(); }
+  function renderAll() { renderDashboard(); renderPortfolio(); renderTax(); renderAccounts(); renderCategories(); renderTransactions(); renderTemplates(); renderNotes(); }
   function dashboardCurrency(t) {
     const id = t.kind === 'income' ? t.to_account_id : t.from_account_id;
     return account(id)?.currency;
@@ -197,6 +198,7 @@
     const listed = state.securities.filter(s => s.market === market);
     fillSelect($('trade-security'), listed, 'เลือกหุ้น', s => `${s.symbol} · ${s.name}`);
     fillSelect($('price-security'), listed, 'เลือกหุ้น', s => `${s.symbol} · ${s.name}`);
+    fillSelect($('chart-security'), listed, 'เลือกหุ้นในพอร์ต (หรือกรอกรหัสเอง)', s => `${s.symbol} · ${s.name}`);
     let totalCost = 0n, totalValue = 0n, totalUnrealized = 0n, totalRealized = 0n, priced = 0, heldCount = 0;
     const holdings = $('portfolio-holdings'); holdings.replaceChildren();
     if (!listed.length) holdings.append(elem('p', 'ยังไม่มีหุ้นในตลาดนี้ เริ่มจากเพิ่มหุ้นด้านล่าง', 'empty'));
@@ -259,6 +261,152 @@
       if (!buy && fees > gross) throw new Error('ค่าธรรมเนียมเกินยอดขาย');
       target.textContent = `${buy ? 'จ่ายรวม' : 'รับสุทธิ'} ${moneyUnits(buy ? gross + fees : gross - fees, s.currency)} · ก่อนค่าธรรมเนียม ${moneyUnits(gross, s.currency)}`;
     } catch (error) { target.textContent = error.message || 'กรอกหุ้น จำนวน และราคาเพื่อดูยอดโดยประมาณ'; }
+  }
+  function clearStockChart() {
+    $('stock-chart').replaceChildren(elem('p', 'เลือกหุ้นแล้วกดดูกราฟ', 'empty'));
+    $('chart-help').textContent = 'กราฟใช้สำหรับดูประกอบการตัดสินใจเท่านั้น ราคาที่คำนวณพอร์ตยังเป็นราคาที่คุณกรอกเอง';
+  }
+  function renderStockChart() {
+    const market = $('portfolio-market').value;
+    const symbol = $('chart-symbol').value.trim().toUpperCase();
+    if (!/^[A-Z0-9._-]{2,15}:[A-Z0-9._-]{1,20}$/.test(symbol)) throw new Error('กรอกรหัสแบบ ตลาด:หุ้น เช่น NASDAQ:AAPL หรือ SET:PTT');
+    const [exchange, ticker] = symbol.split(':');
+    if (market === 'SET' && exchange !== 'SET') throw new Error('หุ้นไทยต้องใช้รหัสขึ้นต้น SET:');
+    if (market === 'US' && exchange === 'SET') throw new Error('เลือกตลาดหุ้นไทยก่อน');
+    const box = $('stock-chart'); box.replaceChildren();
+    const link = elem('a', `เปิด ${symbol} บน TradingView`);
+    link.href = `https://www.tradingview.com/symbols/${encodeURIComponent(exchange)}-${encodeURIComponent(ticker)}/`;
+    link.target = '_blank'; link.rel = 'noopener noreferrer';
+    if (market === 'SET') {
+      const info = elem('div', null, 'empty');
+      info.append(elem('p', 'หุ้นไทย: เปิดกราฟบนเว็บไซต์ TradingView โดยตรง'), link);
+      box.append(info);
+      $('chart-help').textContent = 'Widget สำหรับ SET ยังไม่อยู่ในรายชื่อตลาดที่ TradingView ให้ใช้กับเว็บภายนอก';
+      return;
+    }
+    const container = elem('div', null, 'tradingview-widget-container');
+    const widget = elem('div', null, 'tradingview-widget-container__widget');
+    const attribution = elem('div', null, 'tradingview-widget-copyright');
+    attribution.append(link, elem('span', ' · กราฟโดย TradingView'));
+    const script = document.createElement('script');
+    script.type = 'text/javascript'; script.async = true;
+    script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
+    script.textContent = JSON.stringify({ autosize: true, symbol, interval: 'D', timezone: 'exchange', theme: 'light', style: '1', locale: 'en', allow_symbol_change: true, hide_side_toolbar: true, withdateranges: true, save_image: false, support_host: 'https://www.tradingview.com' });
+    container.append(widget, attribution, script); box.append(container);
+    $('chart-help').textContent = `กำลังแสดง ${symbol} · ตรวจรหัสตลาดให้ตรงกับหุ้นจริง ราคากราฟไม่อัปเดตราคาอ้างอิงในพอร์ต`;
+  }
+  const thb = n => moneyUnits(n, 'THB');
+  const minBig = (a, b) => a < b ? a : b;
+  const maxBig = (a, b) => a > b ? a : b;
+  function progressiveTax(netIncome) {
+    const tiers = [
+      [150000n, 0n], [300000n, 5n], [500000n, 10n], [750000n, 15n],
+      [1000000n, 20n], [2000000n, 25n], [5000000n, 30n]
+    ];
+    let lower = 0n, tax = 0n;
+    for (const [limitBaht, rate] of tiers) {
+      const upper = limitBaht * 10000n;
+      tax += roundDiv(maxBig(0n, minBig(netIncome, upper) - lower) * rate, 100n);
+      lower = upper;
+    }
+    tax += roundDiv(maxBig(0n, netIncome - lower) * 35n, 100n);
+    return tax;
+  }
+  function taxFormData() {
+    const nonnegative = id => { const n = units($(id).value || '0'); if (n < 0n) throw new Error('จำนวนเงินภาษีต้องไม่ติดลบ'); return n; };
+    return {
+      freelance_mode: $('tax-freelance-mode').value,
+      freelance_expense: nonnegative('tax-freelance-expense'),
+      dividend_mode: $('tax-dividend-mode').value,
+      other_deductions: nonnegative('tax-other-deductions'),
+      forecast_salary: nonnegative('tax-forecast-salary'),
+      forecast_freelance: nonnegative('tax-forecast-freelance')
+    };
+  }
+  function taxLine(container, label, value) {
+    const row = elem('div', null, 'tax-line'); row.append(elem('span', label), elem('strong', value)); container.append(row);
+  }
+  function taxMetric(container, label, value, detail) {
+    const card = elem('div', null, 'metric-card');
+    card.append(elem('span', label), elem('strong', value), elem('small', detail)); container.append(card);
+  }
+  function renderTax() {
+    const year = Number($('tax-year').value);
+    const saved = state.taxProfiles.find(p => p.tax_year === year);
+    $('tax-freelance-mode').value = saved?.freelance_mode || 'unclassified';
+    $('tax-freelance-expense').value = saved?.freelance_expense || '0';
+    $('tax-dividend-mode').value = saved?.dividend_mode || 'unclassified';
+    $('tax-other-deductions').value = saved?.other_deductions || '0';
+    $('tax-forecast-salary').value = saved?.forecast_salary || '0';
+    $('tax-forecast-freelance').value = saved?.forecast_freelance || '0';
+    renderTaxCalculation();
+  }
+  function renderTaxCalculation() {
+    const metrics = $('tax-metrics'), breakdown = $('tax-income-breakdown'), warnings = $('tax-warnings'), calc = $('tax-calculation');
+    metrics.replaceChildren(); breakdown.replaceChildren(); warnings.replaceChildren(); calc.replaceChildren();
+    try {
+      const form = taxFormData(), year = Number($('tax-year').value);
+      const amounts = { salary: 0n, freelance: 0n, dividend: 0n, other: 0n };
+      const withheld = { salary: 0n, freelance: 0n, dividend: 0n, other: 0n };
+      const issues = [], dividends = [];
+      for (const t of activeTransactions()) {
+        if (t.kind !== 'income' || !t.occurred_on.startsWith(`${year}-`)) continue;
+        if (dashboardCurrency(t) !== 'THB') { issues.push('มีรายรับสกุลอื่นหรือไม่ทราบสกุลเงิน ต้องตรวจอัตราแลกเปลี่ยนก่อนคำนวณ'); continue; }
+        const source = Object.hasOwn(amounts, t.income_source) ? t.income_source : 'other';
+        amounts[source] += units(t.gross_amount || t.amount);
+        withheld[source] += units(t.withheld_tax_amount || '0');
+        if (source === 'dividend') dividends.push(t);
+      }
+      const salary = amounts.salary + form.forecast_salary;
+      const freelance = amounts.freelance + form.forecast_freelance;
+      const totalRecorded = Object.values(amounts).reduce((sum, n) => sum + n, 0n);
+      if (freelance > 0n && form.freelance_mode === 'unclassified') issues.push('ยังไม่ระบุประเภทงานเสริม จึงหักค่าใช้จ่ายให้ถูกต้องไม่ได้');
+      if (form.freelance_mode === 'manual' && form.freelance_expense > freelance) issues.push('ค่าใช้จ่ายงานเสริมที่กรอกมากกว่ารายได้งานเสริม');
+      if (amounts.dividend > 0n && form.dividend_mode !== 'thai_final_10') issues.push('ปันผลยังไม่ยืนยันว่าเป็นปันผลไทยที่เลือกเสียภาษี 10% เป็นที่สุด');
+      if (amounts.dividend > 0n && form.dividend_mode === 'thai_final_10' && dividends.some(t => units(t.withheld_tax_amount || '0') !== roundDiv(units(t.gross_amount || t.amount), 10n))) issues.push('ปันผลบางรายการไม่ได้บันทึกภาษีหัก ณ ที่จ่าย 10% ของยอดก่อนหัก');
+      if (amounts.other > 0n) issues.push('มีรายรับประเภทอื่นที่ยังไม่จัดประเภทภาษี');
+      for (const issue of [...new Set(issues)]) warnings.append(elem('p', issue, 'tax-warning'));
+      if (!issues.length) warnings.append(elem('p', 'ข้อมูลที่บันทึกอยู่รองรับสูตรพื้นฐานนี้ ตรวจค่าลดหย่อนและเอกสารอีกครั้งก่อนใช้ยื่นภาษี', 'tax-ok'));
+      if (form.other_deductions === 0n) warnings.append(elem('p', 'ยังไม่ได้กรอกค่าลดหย่อนอื่น เช่น ประกันสังคมหรือเบี้ยประกันที่ใช้สิทธิ์ได้', 'tax-warning'));
+      if (!totalRecorded && !form.forecast_salary && !form.forecast_freelance) warnings.append(elem('p', 'ยังไม่มีรายรับของปีนี้', 'tax-warning'));
+      taxLine(breakdown, 'เงินเดือนที่บันทึก', thb(amounts.salary));
+      taxLine(breakdown, 'งานเสริมที่บันทึก', thb(amounts.freelance));
+      taxLine(breakdown, 'ปันผลที่บันทึก', thb(amounts.dividend));
+      if (amounts.other) taxLine(breakdown, 'รายรับอื่นที่ยังไม่จัดประเภท', thb(amounts.other));
+      taxLine(breakdown, 'เงินเดือน / งานเสริมคาดว่าจะได้รับเพิ่ม', `${thb(form.forecast_salary)} / ${thb(form.forecast_freelance)}`);
+      const actualWithheld = withheld.salary + withheld.freelance;
+      taxMetric(metrics, 'รายรับจริงที่บันทึก (THB)', thb(totalRecorded), 'ก่อนหักภาษี ณ ที่จ่าย');
+      taxMetric(metrics, 'ภาษีหัก ณ ที่จ่ายที่นำมาเทียบ', thb(actualWithheld), 'เฉพาะเงินเดือนและงานเสริม');
+      if (issues.length) {
+        taxMetric(metrics, 'ภาษีประมาณการทั้งปี', '—', 'รอจัดประเภทเงินได้ให้ครบ');
+        taxMetric(metrics, 'ส่วนต่างจากภาษีที่หักแล้ว', '—', 'ยังสรุปไม่ได้');
+        taxLine(calc, 'สถานะ', 'ยังคำนวณทั้งปีไม่ได้ — ดูข้อมูลที่ต้องตรวจด้านบน');
+        return;
+      }
+      const employmentExpense = minBig((salary + (form.freelance_mode === '40_2' ? freelance : 0n)) / 2n, 100000n * 10000n);
+      const freelanceExpense = form.freelance_mode === 'manual' ? form.freelance_expense : 0n;
+      const totalExpense = employmentExpense + freelanceExpense;
+      const personalAllowance = 60000n * 10000n;
+      const net = maxBig(0n, salary + freelance - totalExpense - personalAllowance - form.other_deductions);
+      const progressive = progressiveTax(net);
+      const alternative = freelance >= 120000n * 10000n ? roundDiv(freelance * 5n, 1000n) : 0n;
+      const selectedAlternative = alternative > 5000n * 10000n && alternative > progressive;
+      const estimated = selectedAlternative ? alternative : progressive;
+      taxMetric(metrics, 'ภาษีประมาณการทั้งปี', thb(estimated), 'ตามรายรับจริงและรายรับคาดการณ์ที่กรอก');
+      taxMetric(metrics, 'ส่วนต่างจากภาษีที่หักแล้ว', thb(estimated - actualWithheld), 'ค่าลบหมายถึงอาจมีภาษีหักเกิน');
+      taxLine(calc, 'รายได้ที่นำมาคำนวณ', thb(salary + freelance));
+      taxLine(calc, 'ค่าใช้จ่ายเงินเดือน/ม.40(2)', thb(employmentExpense));
+      if (freelanceExpense) taxLine(calc, 'ค่าใช้จ่ายงานเสริมที่กรอก', thb(freelanceExpense));
+      taxLine(calc, 'ค่าลดหย่อนส่วนตัว', thb(personalAllowance));
+      taxLine(calc, 'ค่าลดหย่อนอื่นที่กรอก', thb(form.other_deductions));
+      taxLine(calc, 'เงินได้สุทธิ', thb(net));
+      taxLine(calc, 'ภาษีขั้นบันได', thb(progressive));
+      if (alternative) taxLine(calc, 'วิธี 0.5% จากงานเสริม (ใช้เมื่อเกิน 5,000 บาทและสูงกว่า)', thb(alternative));
+      taxLine(calc, 'ภาษีประมาณการที่ใช้', thb(estimated));
+    } catch (error) {
+      warnings.append(elem('p', `ตรวจข้อมูลที่กรอก: ${error.message}`, 'tax-warning'));
+      taxMetric(metrics, 'ภาษีประมาณการทั้งปี', '—', 'ตรวจตัวเลขในฟอร์ม');
+    }
   }
   function fillSelect(select, items, blank, label) {
     const before = select.value;
@@ -389,7 +537,32 @@
   $('dashboard-currency').addEventListener('change', renderDashboard);
   $('dashboard-period').addEventListener('change', renderDashboard);
   $('dashboard-all').addEventListener('click', () => switchView('transactions'));
-  $('portfolio-market').addEventListener('change', renderPortfolio);
+  $('portfolio-market').addEventListener('change', () => { $('chart-symbol').value = ''; clearStockChart(); renderPortfolio(); });
+  $('chart-security').addEventListener('change', () => {
+    const selected = security($('chart-security').value);
+    $('chart-symbol').value = selected ? `${selected.market === 'SET' ? 'SET' : 'NASDAQ'}:${selected.symbol}` : '';
+    $('chart-help').textContent = selected?.market === 'US' ? 'NASDAQ เป็นเพียงรหัสเริ่มต้น หากหุ้นอยู่ NYSE หรือ AMEX ให้แก้รหัสตลาดก่อนดูกราฟ' : 'หุ้นไทยจะเปิดกราฟบนเว็บไซต์ TradingView';
+  });
+  $('chart-show').addEventListener('click', () => { try { renderStockChart(); say(''); } catch (error) { say(error.message, true); } });
+  $('tax-year').addEventListener('change', renderTax);
+  $('tax-profile-form').addEventListener('input', renderTaxCalculation);
+  $('tax-profile-form').addEventListener('change', renderTaxCalculation);
+  $('tax-profile-form').addEventListener('submit', async event => {
+    event.preventDefault(); if (!state.user) return;
+    const button = event.target.querySelector('button[type="submit"]'); button.disabled = true;
+    try {
+      const year = Number($('tax-year').value), form = taxFormData();
+      const record = Object.fromEntries(Object.entries(form).map(([key, value]) => [key, typeof value === 'bigint' ? decimal(value) : value]));
+      record.updated_at = new Date().toISOString();
+      const exists = state.taxProfiles.some(p => p.tax_year === year);
+      const result = exists
+        ? await db.from('tax_profiles').update(record).eq('owner_id', state.user.id).eq('tax_year', year)
+        : await db.from('tax_profiles').insert({ owner_id: state.user.id, tax_year: year, ...record });
+      if (result.error) throw result.error;
+      await loadData(); say('บันทึกข้อมูลภาษีแล้ว');
+    } catch (error) { say(`บันทึกข้อมูลภาษีไม่สำเร็จ: ${error.message}`, true); }
+    finally { button.disabled = false; }
+  });
   for (const id of ['trade-security', 'trade-side', 'trade-quantity', 'trade-price', 'trade-fees']) $(id).addEventListener('input', updateTradePreview);
   $('toggle-void-trades').addEventListener('click', () => { state.voidTrades = !state.voidTrades; renderTradeList(); });
   $('security-form').addEventListener('submit', async event => {
