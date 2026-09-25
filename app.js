@@ -345,6 +345,7 @@
     fillSelect($('price-security'), listed, 'เลือกหุ้น', s => `${s.symbol} · ${s.name}`);
     fillSelect($('chart-security'), listed, 'เลือกหุ้นในพอร์ต (หรือกรอกรหัสเอง)', s => `${s.symbol} · ${s.name}`);
     let totalCost = 0n, totalValue = 0n, totalUnrealized = 0n, totalRealized = 0n, priced = 0, heldCount = 0;
+    for (const s of archived) { try { totalRealized += portfolioModel(s.id).realized; } catch { /* Historical row remains in trade list for review. */ } }
     const holdings = $('portfolio-holdings'); holdings.replaceChildren();
     if (!listed.length) holdings.append(elem('p', 'ยังไม่มีหุ้นในตลาดนี้ เริ่มจากเพิ่มหุ้นด้านล่าง', 'empty'));
     for (const s of listed) {
@@ -379,7 +380,7 @@
       ['ต้นทุนหุ้นที่ถือ', moneyUnits(totalCost, currency), `${heldCount} หุ้นที่ยังถือ`],
       ['มูลค่าประเมิน', priced ? moneyUnits(totalValue, currency) : '—', `มีราคา ${priced}/${heldCount} หุ้นที่ถือ`],
       ['กำไรที่ยังไม่ขาย', priced ? moneyUnits(totalUnrealized, currency) : '—', 'เฉพาะหุ้นที่มีราคาอ้างอิง'],
-      ['กำไรจากการขายแล้ว', moneyUnits(totalRealized, currency), 'ตามต้นทุนเฉลี่ยถ่วงน้ำหนัก']
+      ['กำไรจากการขายแล้ว', moneyUnits(totalRealized, currency), 'รวมประวัติหุ้นที่เอาออกด้วย']
     ];
     const box = $('portfolio-metrics'); box.replaceChildren();
     for (const [label, value, detail] of metrics) {
