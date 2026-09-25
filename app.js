@@ -61,7 +61,7 @@
         allRows('notes', 'id,title,body,transaction_id,created_at', q => q.order('created_at', { ascending: false })),
         allRows('quick_templates', 'id,name,kind,account_id,category_id,amount,description,income_source,gross_amount,withheld_tax_amount,created_at', q => q.order('created_at', { ascending: false })),
         allRows('securities', 'id,market,symbol,name,currency,last_price,price_as_of,created_at', q => q.order('market').order('symbol')),
-        allRows('investment_trades', 'id,security_id,side,traded_on,quantity,unit_price,gross_amount,fees,note,voided_at,created_at', q => q.order('traded_on', { ascending: false }).order('created_at', { ascending: false })),
+        allRows('investment_trades', 'id,security_id,side,traded_on,quantity,unit_price,gross_amount,fees,note,source_fingerprint,voided_at,created_at', q => q.order('traded_on', { ascending: false }).order('created_at', { ascending: false })),
         allRows('tax_profiles', 'tax_year,freelance_mode,freelance_expense,dividend_mode,other_deductions,forecast_salary,forecast_freelance')
       ]);
       Object.assign(state, { accounts, balances, categories, transactions, notes, templates, securities, trades, taxProfiles });
@@ -173,16 +173,23 @@
     }
   }
   const roundDiv = (value, divisor) => (value + divisor / 2n) / divisor;
-  const shareText = value => decimal(value).replace(/\.?0+$/, '');
+  function shareUnits(raw) {
+    const value = String(raw ?? '').trim();
+    if (!/^\d+(\.\d{1,8})?$/.test(value)) throw new Error('จำนวนหุ้นต้องมีทศนิยมไม่เกิน 8 ตำแหน่ง');
+    const [whole, fraction = ''] = value.split('.');
+    return BigInt(whole) * 100000000n + BigInt(fraction.padEnd(8, '0'));
+  }
+  function shareDecimal(value) { return `${value / 100000000n}.${String(value % 100000000n).padStart(8, '0')}`; }
+  const shareText = value => shareDecimal(value).replace(/\.?0+$/, '');
   function security(id) { return state.securities.find(s => s.id === id); }
-  function tradeGross(quantity, price) { return roundDiv(quantity * price, 10000n); }
+  function tradeGross(quantity, price) { return roundDiv(quantity * price, 100000000n); }
   function portfolioModel(securityId, extraTrade = null) {
     const trades = state.trades.filter(t => t.security_id === securityId && !t.voided_at);
     if (extraTrade) trades.push(extraTrade);
     trades.sort((a, b) => a.traded_on.localeCompare(b.traded_on) || a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
     let shares = 0n, cost = 0n, realized = 0n;
     for (const t of trades) {
-      const quantity = units(t.quantity), gross = units(t.gross_amount), fees = units(t.fees);
+      const quantity = shareUnits(t.quantity), gross = units(t.gross_amount), fees = units(t.fees);
       if (t.side === 'buy') { shares += quantity; cost += gross + fees; }
       else {
         if (quantity > shares) throw new Error('ขายเกินจำนวนหุ้นที่ถือ ณ วันที่รายการ');
@@ -216,7 +223,7 @@
       head.append(title, elem('span', shares ? `${shareText(shares)} หุ้น` : 'ยังไม่ถือ', 'holding-badge')); card.append(head);
       const details = elem('div', null, 'holding-details');
       details.append(elem('span', 'ต้นทุนที่ถือ'), elem('strong', moneyUnits(cost, currency)));
-      details.append(elem('span', 'ต้นทุนเฉลี่ย/หุ้น'), elem('strong', shares ? moneyUnits(roundDiv(cost * 10000n, shares), currency) : '—'));
+      details.append(elem('span', 'ต้นทุนเฉลี่ย/หุ้น'), elem('strong', shares ? moneyUnits(roundDiv(cost * 100000000n, shares), currency) : '—'));
       details.append(elem('span', 'ราคาอ้างอิง'), elem('strong', s.last_price != null ? `${money(s.last_price, currency)} · ${s.price_as_of}` : 'ยังไม่ระบุ'));
       details.append(elem('span', 'มูลค่า / กำไรที่ยังไม่ขาย'), elem('strong', value != null ? `${moneyUnits(value, currency)} / ${moneyUnits(value - cost, currency)}` : '—'));
       details.append(elem('span', 'กำไรจากการขายแล้ว'), elem('strong', moneyUnits(realized, currency)));
@@ -243,7 +250,7 @@
     for (const t of rows) {
       const s = security(t.security_id), tr = elem('tr');
       tr.append(elem('td', t.traded_on), elem('td', s.symbol), elem('td', t.side === 'buy' ? 'ซื้อ' : 'ขาย'));
-      tr.append(elem('td', shareText(units(t.quantity)), 'right'), elem('td', money(t.unit_price, s.currency), 'right'));
+      tr.append(elem('td', shareText(shareUnits(t.quantity)), 'right'), elem('td', money(t.unit_price, s.currency), 'right'));
       const total = units(t.gross_amount) + (t.side === 'buy' ? units(t.fees) : -units(t.fees));
       const moneyCell = elem('td', moneyUnits(total, s.currency), 'right'); moneyCell.title = `ค่าธรรมเนียม ${money(t.fees, s.currency)}${t.note ? ' · ' + t.note : ''}`;
       tr.append(moneyCell);
@@ -255,7 +262,7 @@
     const target = $('trade-preview'), securityId = $('trade-security').value, s = security(securityId);
     try {
       if (!s || !$('trade-quantity').value || !$('trade-price').value) throw new Error('');
-      const quantity = units($('trade-quantity').value), price = units($('trade-price').value), fees = units($('trade-fees').value || '0');
+      const quantity = shareUnits($('trade-quantity').value), price = units($('trade-price').value), fees = units($('trade-fees').value || '0');
       if (quantity <= 0n || price <= 0n || fees < 0n) throw new Error('');
       const gross = tradeGross(quantity, price), buy = $('trade-side').value === 'buy';
       if (!buy && fees > gross) throw new Error('ค่าธรรมเนียมเกินยอดขาย');
@@ -294,6 +301,128 @@
     script.textContent = JSON.stringify({ autosize: true, symbol, interval: 'D', timezone: 'exchange', theme: 'light', style: '1', locale: 'en', allow_symbol_change: true, hide_side_toolbar: true, withdateranges: true, save_image: false, support_host: 'https://www.tradingview.com' });
     container.append(widget, attribution, script); box.append(container);
     $('chart-help').textContent = `กำลังแสดง ${symbol} · ตรวจรหัสตลาดให้ตรงกับหุ้นจริง ราคากราฟไม่อัปเดตราคาอ้างอิงในพอร์ต`;
+  }
+  let pendingReceipt = null;
+  let receiptBusy = false;
+  const receiptStatus = (message, error = false) => { $('receipt-status').textContent = message; $('receipt-status').classList.toggle('error', error); };
+  function loadExternalScript(url, globalName) {
+    if (window[globalName]) return Promise.resolve(window[globalName]);
+    return new Promise((resolve, reject) => {
+      const script = document.createElement('script'); script.src = url; script.async = true;
+      script.onload = () => window[globalName] ? resolve(window[globalName]) : reject(new Error('โหลดเครื่องมืออ่านเอกสารไม่สำเร็จ'));
+      script.onerror = () => reject(new Error('โหลดเครื่องมืออ่านเอกสารไม่สำเร็จ ตรวจอินเทอร์เน็ตแล้วลองใหม่'));
+      document.head.append(script);
+    });
+  }
+  async function receiptImage(file) {
+    const name = file.name.toLowerCase();
+    if (name.endsWith('.heic') || name.endsWith('.heif') || /heic|heif/.test(file.type)) {
+      const converter = await loadExternalScript('https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js', 'heic2any');
+      const result = await converter({ blob: file, toType: 'image/jpeg', quality: 0.95 });
+      return Array.isArray(result) ? result[0] : result;
+    }
+    if (name.endsWith('.pdf') || file.type === 'application/pdf') {
+      const pdfjs = await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@5.4.624/build/pdf.mjs');
+      pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@5.4.624/build/pdf.worker.mjs';
+      const pdf = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise;
+      try {
+        if (pdf.numPages !== 1) throw new Error('รองรับ PDF หลักฐาน 1 หน้าเท่านั้น');
+        const page = await pdf.getPage(1);
+        const base = page.getViewport({ scale: 1 });
+        const viewport = page.getViewport({ scale: Math.min(2, 2800 / Math.max(base.width, base.height)) });
+        const canvas = document.createElement('canvas'); canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
+        await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+        return await new Promise((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('แปลง PDF ไม่สำเร็จ')), 'image/png'));
+      } finally { await pdf.destroy(); }
+    }
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) && !/\.(png|jpe?g|webp)$/.test(name)) throw new Error('รองรับ JPG, PNG, HEIC และ PDF 1 หน้า');
+    return file;
+  }
+  async function fileFingerprint(file) {
+    const bytes = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
+    return [...new Uint8Array(bytes)].map(x => x.toString(16).padStart(2, '0')).join('');
+  }
+  function fillReceiptReview(data) {
+    $('receipt-market').value = data.market || '';
+    $('receipt-side').value = data.side || '';
+    $('receipt-symbol').value = data.symbol || '';
+    $('receipt-date').value = data.tradedOn || '';
+    $('receipt-quantity').value = data.quantity || '';
+    $('receipt-price').value = data.unitPrice || '';
+    $('receipt-fees').value = data.fees || '';
+    $('receipt-review').hidden = false;
+  }
+  function receiptFormData() {
+    return {
+      market: $('receipt-market').value, side: $('receipt-side').value,
+      symbol: $('receipt-symbol').value.trim().toUpperCase(), tradedOn: $('receipt-date').value,
+      quantity: $('receipt-quantity').value, unitPrice: $('receipt-price').value,
+      fees: $('receipt-fees').value, broker: pendingReceipt?.parsed?.broker || ''
+    };
+  }
+  async function saveImportedTrade(data, fingerprint, auto = false) {
+    if (!state.user) throw new Error('กรุณาเข้าสู่ระบบก่อน');
+    const { market, side, symbol, tradedOn } = data;
+    if (!['US', 'SET'].includes(market) || !['buy', 'sell'].includes(side)) throw new Error('กรุณาตรวจตลาดและประเภทคำสั่ง');
+    if (!/^[A-Z0-9._^-]{1,20}$/.test(symbol)) throw new Error('กรุณาตรวจสัญลักษณ์หุ้น');
+    if (!/^20\d{2}-\d{2}-\d{2}$/.test(tradedOn)) throw new Error('กรุณาตรวจวันที่ซื้อ–ขาย');
+    const quantity = shareUnits(data.quantity), unitPrice = units(data.unitPrice), fees = units(data.fees);
+    if (quantity <= 0n || unitPrice <= 0n || fees < 0n) throw new Error('จำนวนหุ้น ราคา หรือค่าธรรมเนียมไม่ถูกต้อง');
+    const gross = tradeGross(quantity, unitPrice);
+    if (gross <= 0n || (side === 'sell' && fees > gross)) throw new Error('ยอดซื้อขายไม่ถูกต้อง');
+    const existing = state.securities.find(s => s.market === market && s.symbol === symbol);
+    if (state.trades.some(t => t.source_fingerprint === fingerprint)) throw new Error('หลักฐานนี้เคยบันทึกแล้ว');
+    if (existing && state.trades.some(t => t.security_id === existing.id && !t.voided_at && t.side === side && t.traded_on === tradedOn && shareUnits(t.quantity) === quantity && units(t.unit_price) === unitPrice && units(t.fees) === fees)) {
+      throw new Error('พบรายการที่มีหุ้น วันที่ จำนวน ราคา และค่าธรรมเนียมตรงกันแล้ว กรุณาตรวจประวัติ');
+    }
+    if (auto && !data.broker) throw new Error('ต้องตรวจเอกสารก่อนบันทึก');
+    let securityId = existing?.id;
+    if (!securityId) {
+      if (side === 'sell') throw new Error('ยังไม่มีหุ้นนี้ในพอร์ต กรุณาตรวจรายการก่อน');
+      const result = await db.from('securities').insert({ owner_id: state.user.id, market, symbol, name: symbol, currency: market === 'SET' ? 'THB' : 'USD' }).select('id').single();
+      if (result.error) throw result.error;
+      securityId = result.data.id;
+    }
+    const row = { owner_id: state.user.id, security_id: securityId, side, traded_on: tradedOn, quantity: shareDecimal(quantity), unit_price: decimal(unitPrice), fees: decimal(fees), note: `นำเข้าจากหลักฐาน${data.broker ? ' ' + data.broker : ''}`, source_fingerprint: fingerprint };
+    portfolioModel(securityId, { ...row, id: 'zzzzzzzz', gross_amount: decimal(gross), created_at: new Date().toISOString(), voided_at: null });
+    const result = await db.from('investment_trades').insert(row);
+    if (result.error) throw result.error;
+    $('portfolio-market').value = market;
+    $('receipt-file').value = '';
+    $('receipt-review').hidden = true;
+    pendingReceipt = null;
+    await loadData();
+    receiptStatus(`บันทึก${side === 'buy' ? 'ซื้อ' : 'ขาย'} ${symbol} ${shareText(quantity)} หุ้น วันที่ ${tradedOn} แล้ว`);
+    say('บันทึกรายการหุ้นจากหลักฐานแล้ว');
+  }
+  async function importReceipt(file) {
+    if (!file || receiptBusy) return;
+    receiptBusy = true; $('receipt-file').disabled = true; $('receipt-review').hidden = true; pendingReceipt = null;
+    try {
+      if (file.size > 15 * 1024 * 1024) throw new Error('ไฟล์ต้องไม่เกิน 15 MB');
+      receiptStatus('กำลังเตรียมเอกสาร…');
+      const fingerprint = await fileFingerprint(file);
+      if (state.trades.some(t => t.source_fingerprint === fingerprint)) throw new Error('หลักฐานนี้เคยบันทึกแล้ว');
+      const image = await receiptImage(file);
+      receiptStatus('กำลังอ่านตัวอักษรบนเครื่องของคุณ…');
+      const tesseract = await loadExternalScript('https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js', 'Tesseract');
+      const worker = await tesseract.createWorker(['tha', 'eng'], 1, { logger: m => { if (m.status === 'recognizing text') receiptStatus(`กำลังอ่านเอกสาร ${Math.round((m.progress || 0) * 100)}%…`); } });
+      let ocr;
+      try { ocr = (await worker.recognize(image)).data; }
+      finally { await worker.terminate(); }
+      const parsed = window.TradeReceipt.parse(ocr.text);
+      pendingReceipt = { fingerprint, parsed };
+      fillReceiptReview(parsed);
+      if (parsed.ready && ocr.confidence >= 55) {
+        receiptStatus('ข้อมูลครบและยอดตรงกัน กำลังบันทึก…');
+        try { await saveImportedTrade(parsed, fingerprint, true); return; }
+        catch (error) { receiptStatus(`${error.message} ตรวจข้อมูลด้านล่างก่อนบันทึก`, true); }
+      } else {
+        const reason = parsed.warnings.length ? parsed.warnings.join(' · ') : 'ความมั่นใจของ OCR ยังต่ำ';
+        receiptStatus(`ต้องตรวจข้อมูลก่อนบันทึก: ${reason}`, true);
+      }
+    } catch (error) { receiptStatus(error.message || 'อ่านเอกสารไม่สำเร็จ', true); }
+    finally { receiptBusy = false; $('receipt-file').disabled = false; }
   }
   const thb = n => moneyUnits(n, 'THB');
   const minBig = (a, b) => a < b ? a : b;
@@ -563,6 +692,14 @@
     } catch (error) { say(`บันทึกข้อมูลภาษีไม่สำเร็จ: ${error.message}`, true); }
     finally { button.disabled = false; }
   });
+  $('receipt-file').addEventListener('change', event => { void importReceipt(event.target.files[0]); });
+  $('receipt-review').addEventListener('submit', async event => {
+    event.preventDefault(); if (!pendingReceipt || receiptBusy) return;
+    const button = event.target.querySelector('button[type="submit"]'); button.disabled = true;
+    try { await saveImportedTrade(receiptFormData(), pendingReceipt.fingerprint); }
+    catch (error) { receiptStatus(`บันทึกไม่สำเร็จ: ${error.message}`, true); }
+    finally { button.disabled = false; }
+  });
   for (const id of ['trade-security', 'trade-side', 'trade-quantity', 'trade-price', 'trade-fees']) $(id).addEventListener('input', updateTradePreview);
   $('toggle-void-trades').addEventListener('click', () => { state.voidTrades = !state.voidTrades; renderTradeList(); });
   $('security-form').addEventListener('submit', async event => {
@@ -588,11 +725,12 @@
     event.preventDefault(); if (!state.user) return; const button = event.target.querySelector('button[type="submit"]'); button.disabled = true;
     try {
       const securityId = $('trade-security').value, s = security(securityId); if (!s || s.market !== $('portfolio-market').value) throw new Error('กรุณาเลือกหุ้น');
-      const quantity = units(positive($('trade-quantity').value)), unitPrice = units(positive($('trade-price').value));
+      const quantity = shareUnits($('trade-quantity').value), unitPrice = units(positive($('trade-price').value));
+      if (quantity <= 0n) throw new Error('จำนวนหุ้นต้องมากกว่า 0');
       const fees = units($('trade-fees').value || '0'); if (fees < 0n) throw new Error('ค่าธรรมเนียมต้องไม่ติดลบ');
       const gross = tradeGross(quantity, unitPrice); if (gross <= 0n) throw new Error('มูลค่าซื้อขายต้องมากกว่า 0');
       const side = $('trade-side').value; if (side === 'sell' && fees > gross) throw new Error('ค่าธรรมเนียมขายเกินมูลค่าขาย');
-      const data = { owner_id: state.user.id, security_id: securityId, side, traded_on: $('trade-date').value, quantity: decimal(quantity), unit_price: decimal(unitPrice), fees: decimal(fees), note: $('trade-note').value.trim() };
+      const data = { owner_id: state.user.id, security_id: securityId, side, traded_on: $('trade-date').value, quantity: shareDecimal(quantity), unit_price: decimal(unitPrice), fees: decimal(fees), note: $('trade-note').value.trim() };
       portfolioModel(securityId, { ...data, id: 'zzzzzzzz', gross_amount: decimal(gross), created_at: new Date().toISOString(), voided_at: null });
       const { error } = await db.from('investment_trades').insert(data); if (error) throw error;
       event.target.reset(); $('trade-date').value = today(); $('trade-fees').value = '0'; await loadData(); say('บันทึกรายการหุ้นแล้ว');
