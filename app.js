@@ -2,6 +2,7 @@
   const $ = id => document.getElementById(id);
   const config = window.APP_CONFIG || {};
   const state = { user: null, accounts: [], balances: [], categories: [], transactions: [], notes: [], templates: [], securities: [], trades: [], taxProfiles: [], editTransaction: null, editNote: null, trash: false, voidTrades: false };
+  const fx = { status: 'idle', rate: null, date: null, source: null };
   const sourceNames = { salary: 'เงินเดือน', freelance: 'งานเสริม', dividend: 'ปันผล', other: 'รายรับอื่น' };
   const kindNames = { income: 'รายรับ', expense: 'รายจ่าย', transfer: 'โอนเงิน' };
   const visible = (id, yes) => { $(id).hidden = !yes; };
@@ -86,6 +87,92 @@
   }
 
   function renderAll() { renderDashboard(); renderPortfolio(); renderTax(); renderAccounts(); renderCategories(); renderTransactions(); renderTemplates(); renderNotes(); }
+  async function loadExchangeRate() {
+    if (fx.status === 'loading') return;
+    fx.status = 'loading'; renderAssetSummary();
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000);
+      let response;
+      try { response = await fetch('https://api.frankfurter.dev/v2/rate/usd/thb', { signal: controller.signal }); }
+      finally { clearTimeout(timeout); }
+      if (!response.ok) throw new Error('โหลดอัตราแลกเปลี่ยนไม่สำเร็จ');
+      const data = await response.json();
+      if (String(data.base).toUpperCase() !== 'USD' || String(data.quote).toUpperCase() !== 'THB' || !Number.isFinite(Number(data.rate)) || Number(data.rate) < 10 || Number(data.rate) > 100 || !/^20\d{2}-\d{2}-\d{2}$/.test(data.date)) throw new Error('ข้อมูลอัตราแลกเปลี่ยนไม่ถูกต้อง');
+      fx.rate = Number(data.rate); fx.date = data.date; fx.source = 'Frankfurter'; fx.status = 'ready';
+    } catch {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10000);
+        let response;
+        try { response = await fetch('https://open.er-api.com/v6/latest/USD', { signal: controller.signal }); }
+        finally { clearTimeout(timeout); }
+        if (!response.ok) throw new Error('โหลดอัตราแลกเปลี่ยนไม่สำเร็จ');
+        const data = await response.json();
+        const rate = Number(data.rates?.THB);
+        const date = new Date(Number(data.time_last_update_unix) * 1000).toISOString().slice(0, 10);
+        if (data.result !== 'success' || data.base_code !== 'USD' || !Number.isFinite(rate) || rate < 10 || rate > 100 || !/^20\d{2}-\d{2}-\d{2}$/.test(date)) throw new Error('ข้อมูลอัตราแลกเปลี่ยนไม่ถูกต้อง');
+        fx.rate = rate; fx.date = date; fx.source = 'ExchangeRate-API'; fx.status = 'ready';
+      } catch { fx.rate = null; fx.date = null; fx.source = null; fx.status = 'error'; }
+    }
+    renderAssetSummary();
+  }
+  function renderAssetSummary() {
+    const byCurrency = { THB: { cash: 0n, stocks: 0n, missing: 0, accounts: 0 }, USD: { cash: 0n, stocks: 0n, missing: 0, accounts: 0 } };
+    let negativeAccounts = 0;
+    for (const a of state.accounts.filter(a => !a.archived_at)) {
+      const bucket = byCurrency[a.currency]; if (!bucket) continue;
+      const balance = units(state.balances.find(b => b.account_id === a.id)?.balance ?? a.opening_balance);
+      bucket.cash += balance; bucket.accounts++;
+      if (balance < 0n) negativeAccounts++;
+    }
+    for (const s of state.securities) {
+      const bucket = byCurrency[s.currency]; if (!bucket) continue;
+      try {
+        const holding = portfolioModel(s.id);
+        if (holding.shares <= 0n) continue;
+        if (s.last_price == null) bucket.missing++;
+        else bucket.stocks += tradeGross(holding.shares, units(s.last_price));
+      } catch { bucket.missing++; }
+    }
+    const thbTotal = byCurrency.THB.cash + byCurrency.THB.stocks;
+    const usdTotal = byCurrency.USD.cash + byCurrency.USD.stocks;
+    const box = $('asset-summary'); box.replaceChildren();
+    const hero = elem('div', null, 'asset-total');
+    hero.append(elem('span', 'สินทรัพย์รวมประมาณการ (THB)'));
+    if (fx.status === 'ready') {
+      const rateUnits = BigInt(Math.round(fx.rate * 1000000));
+      const converted = roundDiv(usdTotal * rateUnits, 1000000n);
+      hero.append(elem('strong', moneyUnits(thbTotal + converted, 'THB')));
+      const details = elem('small', `เงินและหุ้น THB ${moneyUnits(thbTotal, 'THB')} + USD ${moneyUnits(usdTotal, 'USD')} × ${fx.rate.toLocaleString('en-US', { maximumFractionDigits: 6 })}`);
+      hero.append(details);
+    } else {
+      hero.append(elem('strong', 'รออัตราแลกเปลี่ยน'));
+      hero.append(elem('small', 'แสดงยอดแยกสกุลเงินด้านล่าง'));
+    }
+    box.append(hero);
+    for (const currency of ['THB', 'USD']) {
+      const item = byCurrency[currency];
+      const card = elem('div', null, 'asset-currency');
+      card.append(elem('span', `สินทรัพย์ ${currency}`), elem('strong', moneyUnits(item.cash + item.stocks, currency)));
+      card.append(elem('small', `เงินในบัญชี ${moneyUnits(item.cash, currency)} · หุ้นที่มีราคา ${moneyUnits(item.stocks, currency)}`));
+      box.append(card);
+    }
+    const warning = $('asset-warning'); warning.replaceChildren();
+    const missing = byCurrency.THB.missing + byCurrency.USD.missing;
+    const notes = [];
+    if (fx.status === 'ready') notes.push(`อัตรา 1 USD = ${fx.rate.toLocaleString('en-US', { maximumFractionDigits: 6 })} THB ณ ${fx.date} จาก `);
+    else if (fx.status === 'loading') notes.push('กำลังโหลดอัตรา USD/THB…');
+    else if (fx.status === 'error') notes.push('โหลดอัตรา USD/THB ไม่สำเร็จ จึงยังไม่รวมเป็นบาท');
+    if (notes.length) warning.append(elem('span', notes[0]));
+    if (fx.status === 'ready') { const link = elem('a', fx.source === 'Frankfurter' ? 'Frankfurter' : 'Rates By Exchange Rate API'); link.href = fx.source === 'Frankfurter' ? 'https://frankfurter.dev/' : 'https://www.exchangerate-api.com'; link.target = '_blank'; link.rel = 'noopener noreferrer'; warning.append(link); }
+    if (fx.status === 'error') { const retry = elem('button', 'ลองใหม่', 'outline small'); retry.type = 'button'; retry.addEventListener('click', () => { void loadExchangeRate(); }); warning.append(retry); }
+    const caveats = [];
+    if (missing) caveats.push(`ยังไม่รวม ${missing} หุ้นที่ไม่มีราคาอ้างอิง`);
+    if (negativeAccounts) caveats.push(`มี ${negativeAccounts} บัญชีติดลบ กรุณาตรวจยอดตั้งต้น`);
+    caveats.push('รายการซื้อ–ขายหุ้นยังไม่ปรับยอดบัญชีเงินอัตโนมัติ หากยอดบัญชียังไม่หักเงินซื้อหุ้น ยอดรวมอาจสูงกว่าความจริง');
+    warning.append(elem('span', `${fx.status === 'ready' || fx.status === 'error' ? ' · ' : ''}${caveats.join(' · ')}`));
+  }
   function dashboardCurrency(t) {
     const id = t.kind === 'income' ? t.to_account_id : t.from_account_id;
     return account(id)?.currency;
@@ -107,6 +194,8 @@
     track.append(fill); row.append(head, track); return row;
   }
   function renderDashboard() {
+    renderAssetSummary();
+    if (fx.status === 'idle') void loadExchangeRate();
     const currency = $('dashboard-currency').value;
     const months = dashboardMonths(Number($('dashboard-period').value));
     const byMonth = new Map(months.map(m => [m.key, m]));

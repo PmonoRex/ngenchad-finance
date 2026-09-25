@@ -21,3 +21,16 @@
 @media(max-width:850px){.chart-picker{grid-template-columns:1fr 1fr}.chart-picker button{grid-column:1/-1}}@media(max-width:560px){.chart-picker{grid-template-columns:1fr}.chart-picker button{grid-column:auto}.stock-chart .tradingview-widget-container{height:420px !important}.tax-line{font-size:.8rem}}
 .receipt-card{margin-top:18px}.receipt-card>label{display:block;margin-top:14px}.receipt-card input[type=file]{display:block;width:100%;margin-top:7px;padding:12px;border:1px dashed #b6cfc1;border-radius:10px;background:#f8fcf9}.receipt-status{margin:12px 0 0;padding:11px 13px;border-radius:10px;background:#eef6f0;color:#24563e;font-size:.86rem}.receipt-status.error{background:#fff0ed;color:#9d392d}.receipt-review{margin-top:18px;padding-top:16px;border-top:1px solid #e4ece6}.receipt-review h4{margin:0 0 10px}.receipt-review[hidden]{display:none}
 .receipt-ocr-details{margin-top:18px;font-size:.8rem}.receipt-ocr-details pre{max-height:260px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;padding:12px;background:#f3f7f3;border-radius:9px}
+/* Session 12: all recorded assets, with currency conversion on the dashboard. */
+.assets-card{margin-top:18px;background:linear-gradient(135deg,#fff,#f3faf4)}
+.asset-summary{display:grid;grid-template-columns:minmax(0,1.3fr) repeat(2,minmax(0,1fr));gap:12px;margin-top:17px}
+.asset-total,.asset-currency{display:grid;align-content:center;gap:7px;min-width:0;border:1px solid #dce9df;border-radius:13px;padding:17px;background:#fff}
+.asset-total{background:#e4f3e8;border-color:#cfe6d5}
+.asset-total span,.asset-currency span{font-size:.8rem;color:#5a7468;font-weight:700}
+.asset-total strong{font-size:1.7rem;color:#145d43;overflow-wrap:anywhere}
+.asset-currency strong{font-size:1.15rem;overflow-wrap:anywhere}
+.asset-total small,.asset-currency small{font-size:.78rem;color:#647b70;line-height:1.45}
+.asset-warning{margin-top:12px!important;line-height:1.55}
+.asset-warning button{margin-left:8px}
+@media(max-width:850px){.asset-summary{grid-template-columns:1fr 1fr}.asset-total{grid-column:1/-1}}
+@media(max-width:560px){.asset-summary{grid-template-columns:1fr}.asset-total{grid-column:auto}.asset-total strong{font-size:1.45rem}}
