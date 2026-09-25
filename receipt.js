@@ -20,7 +20,8 @@
   }
   function parseDate(lines) {
     const ordered = [...lines.filter(s => /สำเร็จ|completed|executed/i.test(s)), ...lines];
-    for (const line of ordered) {
+    for (const rawLine of ordered) {
+      const line = rawLine.replace(/ก\.?ุย\./g, 'ก.ย.').replace(/ก\.ุย\./g, 'ก.ย.');
       let m = line.match(/\b(20\d{2})[-\/.](\d{1,2})[-\/.](\d{1,2})\b/);
       if (m) return iso(+m[1], +m[2], +m[3]);
       m = line.match(/\b(\d{1,2})[-\/.](\d{1,2})[-\/.](20\d{2}|\d{2})\b/);
@@ -47,10 +48,6 @@
     const header = lines.slice(0, 12).join(' ');
     const side = /(?:ซื้อ|buy|purchase)/i.test(header) ? 'buy' : /(?:ขาย|sell)/i.test(header) ? 'sell' : '';
     let symbol = (header.match(/(?:ซื้อ|ขาย|buy|sell)\s+([A-Z][A-Z0-9.\-]{0,9})\b/i) || [])[1] || '';
-    if (!symbol) {
-      const banned = new Set(['USD', 'THB', 'NASDAQ', 'NYSE', 'AMEX', 'MARKET', 'DIME', 'VAT', 'BUY', 'SELL']);
-      symbol = (header.match(/\b[A-Z][A-Z0-9.\-]{1,6}\b/g) || []).find(x => !banned.has(x)) || '';
-    }
     symbol = symbol.toUpperCase();
     let quantity = afterLabel(lines, 'จำนวนหุ้น|quantity|shares');
     if (!quantity) quantity = (full.match(/\b0\.\d{5,8}\b/) || [])[0] || '';
