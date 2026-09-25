@@ -1,8 +1,9 @@
 (() => {
   const $ = id => document.getElementById(id);
   const config = window.APP_CONFIG || {};
-  const state = { user: null, accounts: [], balances: [], categories: [], transactions: [], notes: [], templates: [], securities: [], trades: [], taxProfiles: [], editTransaction: null, editNote: null, trash: false, voidTrades: false };
+  const state = { user: null, accounts: [], balances: [], categories: [], transactions: [], notes: [], templates: [], securities: [], trades: [], taxProfiles: [], editTransaction: null, editNote: null, trash: false, voidTrades: false, showArchivedSecurities: false };
   const fx = { status: 'idle', rate: null, date: null, source: null };
+  const quotes = { busy: false, lastCheck: 0, key: localStorage.getItem('ngenchad_twelvedata_key') || '' };
   const sourceNames = { salary: 'เงินเดือน', freelance: 'งานเสริม', dividend: 'ปันผล', other: 'รายรับอื่น' };
   const kindNames = { income: 'รายรับ', expense: 'รายจ่าย', transfer: 'โอนเงิน' };
   const visible = (id, yes) => { $(id).hidden = !yes; };
@@ -61,12 +62,13 @@
         allRows('cash_transactions', 'id,kind,occurred_on,from_account_id,to_account_id,category_id,amount,received_amount,description,gross_amount,withheld_tax_amount,income_source,source_fingerprint,deleted_at,created_at', q => q.order('occurred_on', { ascending: false }).order('created_at', { ascending: false })),
         allRows('notes', 'id,title,body,transaction_id,created_at', q => q.order('created_at', { ascending: false })),
         allRows('quick_templates', 'id,name,kind,account_id,category_id,amount,description,income_source,gross_amount,withheld_tax_amount,created_at', q => q.order('created_at', { ascending: false })),
-        allRows('securities', 'id,market,symbol,name,currency,last_price,price_as_of,created_at', q => q.order('market').order('symbol')),
+        allRows('securities', 'id,market,symbol,name,currency,last_price,price_as_of,archived_at,created_at', q => q.order('market').order('symbol')),
         allRows('investment_trades', 'id,security_id,side,traded_on,quantity,unit_price,gross_amount,fees,note,source_fingerprint,voided_at,created_at', q => q.order('traded_on', { ascending: false }).order('created_at', { ascending: false })),
         allRows('tax_profiles', 'tax_year,freelance_mode,freelance_expense,dividend_mode,other_deductions,forecast_salary,forecast_freelance')
       ]);
       Object.assign(state, { accounts, balances, categories, transactions, notes, templates, securities, trades, taxProfiles });
       renderAll();
+      if (quotes.key && Date.now() - quotes.lastCheck > 15 * 60 * 1000) void refreshStockPrices();
     } catch (error) { say(`โหลดข้อมูลไม่สำเร็จ: ${error.message}`, true); }
   }
   function showAuth(user) {
@@ -74,7 +76,7 @@
     visible('setup', false); visible('login', !user); visible('workspace', !!user); visible('signout', !!user);
     $('status').textContent = user ? 'ข้อมูลส่วนตัว' : 'เข้าสู่ระบบเพื่อดูข้อมูล';
     $('user-email').textContent = user?.email || '';
-    if (user) void loadData();
+    if (user) { $('quote-api-key').value = quotes.key; void loadData(); }
     else { Object.assign(state, { accounts: [], balances: [], categories: [], transactions: [], notes: [], templates: [], securities: [], trades: [], taxProfiles: [] }); say(''); }
   }
   function switchView(view) {
@@ -294,9 +296,51 @@
     }
     return { shares, cost, realized };
   }
+  function percentChange(value, cost) {
+    if (cost <= 0n) return '—';
+    const change = value - cost;
+    const basisPoints = (change < 0n ? -1n : 1n) * roundDiv((change < 0n ? -change : change) * 10000n, cost);
+    const percent = (Number(basisPoints) / 100).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return `${basisPoints > 0n ? '+' : ''}${percent}%`;
+  }
+  async function refreshStockPrices(force = false) {
+    if (!state.user || !quotes.key || quotes.busy || (!force && Date.now() - quotes.lastCheck < 15 * 60 * 1000)) return;
+    const targets = state.securities.filter(s => s.market === 'US' && !s.archived_at);
+    if (!targets.length) { $('quote-status').textContent = 'ยังไม่มีหุ้นสหรัฐให้ดึงราคา'; return; }
+    quotes.busy = true; quotes.lastCheck = Date.now(); $('refresh-prices').disabled = true;
+    $('quote-status').textContent = `กำลังดึงราคา ${targets.length} หุ้นจาก Twelve Data…`;
+    let updated = 0; const failed = [];
+    for (const s of targets) {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 12000);
+        let response;
+        try { response = await fetch(`https://api.twelvedata.com/quote?symbol=${encodeURIComponent(s.symbol)}`, { headers: { Authorization: `apikey ${quotes.key}` }, signal: controller.signal }); }
+        finally { clearTimeout(timeout); }
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const quote = await response.json();
+        if (quote.status === 'error') throw new Error(quote.message || 'API ไม่พร้อม');
+        if (String(quote.symbol).toUpperCase() !== s.symbol || quote.currency !== 'USD' || !/^20\d{2}-\d{2}-\d{2}/.test(String(quote.datetime))) throw new Error('ข้อมูลหุ้นหรือวันที่ไม่ตรง');
+        const price = Number(quote.close);
+        if (!Number.isFinite(price) || price <= 0 || price > 1000000) throw new Error('ราคาไม่ถูกต้อง');
+        const date = String(quote.datetime).slice(0, 10);
+        if (date > today() || date < '2020-01-01') throw new Error('วันที่ราคาไม่ถูกต้อง');
+        const rounded = price.toFixed(4);
+        const { error } = await db.from('securities').update({ last_price: rounded, price_as_of: date }).eq('id', s.id);
+        if (error) throw error;
+        s.last_price = rounded; s.price_as_of = date; updated++;
+      } catch (error) { failed.push(`${s.symbol}: ${error.message}`); }
+    }
+    quotes.busy = false; $('refresh-prices').disabled = false;
+    renderDashboard(); renderPortfolio();
+    $('quote-status').textContent = `${updated} หุ้นอัปเดตแล้ว${failed.length ? ` · ไม่สำเร็จ ${failed.join('; ')}` : ''} · ราคาตลาดอาจมีดีเลย์ ดูวันที่ในแต่ละหุ้น`;
+  }
   function renderPortfolio() {
     const market = $('portfolio-market').value, currency = market === 'SET' ? 'THB' : 'USD';
-    const listed = state.securities.filter(s => s.market === market);
+    const listed = state.securities.filter(s => s.market === market && !s.archived_at);
+    const archived = state.securities.filter(s => s.market === market && s.archived_at);
+    $('toggle-archived-securities').textContent = state.showArchivedSecurities ? 'ซ่อนหุ้นที่เอาออก' : `หุ้นที่เอาออก (${archived.length})`;
+    $('toggle-archived-securities').hidden = !archived.length;
     fillSelect($('trade-security'), listed, 'เลือกหุ้น', s => `${s.symbol} · ${s.name}`);
     fillSelect($('price-security'), listed, 'เลือกหุ้น', s => `${s.symbol} · ${s.name}`);
     fillSelect($('chart-security'), listed, 'เลือกหุ้นในพอร์ต (หรือกรอกรหัสเอง)', s => `${s.symbol} · ${s.name}`);
@@ -318,10 +362,18 @@
       const details = elem('div', null, 'holding-details');
       details.append(elem('span', 'ต้นทุนที่ถือ'), elem('strong', moneyUnits(cost, currency)));
       details.append(elem('span', 'ต้นทุนเฉลี่ย/หุ้น'), elem('strong', shares ? moneyUnits(roundDiv(cost * 100000000n, shares), currency) : '—'));
-      details.append(elem('span', 'ราคาอ้างอิง'), elem('strong', s.last_price != null ? `${money(s.last_price, currency)} · ${s.price_as_of}` : 'ยังไม่ระบุ'));
+      details.append(elem('span', 'ราคาล่าสุดที่บันทึก'), elem('strong', s.last_price != null ? `${money(s.last_price, currency)} · ${s.price_as_of}` : 'ยังไม่ระบุ'));
       details.append(elem('span', 'มูลค่า / กำไรที่ยังไม่ขาย'), elem('strong', value != null ? `${moneyUnits(value, currency)} / ${moneyUnits(value - cost, currency)}` : '—'));
+      details.append(elem('span', 'เทียบต้นทุน'), elem('strong', value != null ? percentChange(value, cost) : '—', value != null && value < cost ? 'negative' : 'positive'));
       details.append(elem('span', 'กำไรจากการขายแล้ว'), elem('strong', moneyUnits(realized, currency)));
-      card.append(details); holdings.append(card);
+      card.append(details);
+      if (shares === 0n) { const remove = elem('button', 'เอาออกจากติดตาม', 'outline small danger'); remove.type = 'button'; remove.dataset.archiveSecurity = s.id; card.append(remove); }
+      holdings.append(card);
+    }
+    const archivedBox = $('archived-securities'); archivedBox.replaceChildren(); archivedBox.hidden = !state.showArchivedSecurities || !archived.length;
+    if (state.showArchivedSecurities) for (const s of archived) {
+      const row = elem('div', null, 'item'); row.append(elem('span', `${s.symbol} · ${s.name}`));
+      const restore = elem('button', 'ติดตามอีกครั้ง', 'outline small'); restore.type = 'button'; restore.dataset.restoreSecurity = s.id; row.append(restore); archivedBox.append(row);
     }
     const metrics = [
       ['ต้นทุนหุ้นที่ถือ', moneyUnits(totalCost, currency), `${heldCount} หุ้นที่ยังถือ`],
@@ -944,12 +996,47 @@
   });
   for (const id of ['trade-security', 'trade-side', 'trade-quantity', 'trade-price', 'trade-fees']) $(id).addEventListener('input', updateTradePreview);
   $('toggle-void-trades').addEventListener('click', () => { state.voidTrades = !state.voidTrades; renderTradeList(); });
+  $('toggle-archived-securities').addEventListener('click', () => { state.showArchivedSecurities = !state.showArchivedSecurities; renderPortfolio(); });
+  $('portfolio-holdings').addEventListener('click', async event => {
+    const button = event.target.closest('[data-archive-security]'); if (!button) return;
+    const s = security(button.dataset.archiveSecurity); if (!s || portfolioModel(s.id).shares !== 0n) { say('หุ้นที่ยังถืออยู่ต้องแสดงในพอร์ตเสมอ', true); return; }
+    button.disabled = true;
+    const { error } = await db.from('securities').update({ archived_at: new Date().toISOString() }).eq('id', s.id);
+    if (error) { button.disabled = false; say(`เอาหุ้นออกไม่สำเร็จ: ${error.message}`, true); }
+    else { await loadData(); say(`เอา ${s.symbol} ออกจากรายการติดตามแล้ว ประวัติซื้อขายยังอยู่`); }
+  });
+  $('archived-securities').addEventListener('click', async event => {
+    const button = event.target.closest('[data-restore-security]'); if (!button) return;
+    const s = security(button.dataset.restoreSecurity); if (!s) return;
+    button.disabled = true;
+    const { error } = await db.from('securities').update({ archived_at: null }).eq('id', s.id);
+    if (error) { button.disabled = false; say(`ติดตามอีกครั้งไม่สำเร็จ: ${error.message}`, true); }
+    else { await loadData(); say(`ติดตาม ${s.symbol} อีกครั้งแล้ว`); }
+  });
+  $('quote-key-form').addEventListener('submit', event => {
+    event.preventDefault();
+    const key = $('quote-api-key').value.trim();
+    if (!/^[A-Za-z0-9]{8,128}$/.test(key)) { $('quote-status').textContent = 'API key ไม่ถูกต้อง กรุณาตรวจจาก Twelve Data'; return; }
+    quotes.key = key; quotes.lastCheck = 0; localStorage.setItem('ngenchad_twelvedata_key', key);
+    $('quote-status').textContent = 'บันทึก API key ในเบราว์เซอร์นี้แล้ว';
+    void refreshStockPrices(true);
+  });
+  $('remove-quote-key').addEventListener('click', () => {
+    quotes.key = ''; quotes.lastCheck = 0; localStorage.removeItem('ngenchad_twelvedata_key'); $('quote-api-key').value = '';
+    $('quote-status').textContent = 'ลบ API key จากเบราว์เซอร์นี้แล้ว ราคาที่เคยบันทึกยังอยู่';
+  });
+  $('refresh-prices').addEventListener('click', () => {
+    if (!quotes.key) { $('quote-status').textContent = 'ใส่ API key ฟรีของ Twelve Data ก่อน'; $('quote-api-key').focus(); return; }
+    void refreshStockPrices(true);
+  });
   $('security-form').addEventListener('submit', async event => {
     event.preventDefault(); if (!state.user) return; const button = event.target.querySelector('button[type="submit"]'); button.disabled = true;
     try {
       const market = $('portfolio-market').value, symbol = $('security-symbol').value.trim().toUpperCase(), name = $('security-name').value.trim();
       if (!/^[A-Z0-9._^-]{1,20}$/.test(symbol)) throw new Error('สัญลักษณ์ใช้ตัวอักษรอังกฤษ ตัวเลข จุด ขีดกลาง หรือขีดล่าง');
       if (!name) throw new Error('กรุณาใส่ชื่อหุ้น');
+      const existing = state.securities.find(s => s.market === market && s.symbol === symbol);
+      if (existing?.archived_at) throw new Error('หุ้นนี้เคยเอาออกแล้ว กด “หุ้นที่เอาออก” เพื่อติดตามอีกครั้ง');
       const { error } = await db.from('securities').insert({ owner_id: state.user.id, market, symbol, name, currency: market === 'SET' ? 'THB' : 'USD' });
       if (error) throw error; event.target.reset(); await loadData(); say(`เพิ่ม ${symbol} แล้ว`);
     } catch (error) { say(`เพิ่มหุ้นไม่สำเร็จ: ${error.message}`, true); } finally { button.disabled = false; }

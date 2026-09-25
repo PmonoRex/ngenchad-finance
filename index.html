@@ -11,12 +11,12 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
-  <link rel="stylesheet" href="style.css?v=12-1">
+  <link rel="stylesheet" href="style.css?v=13-1">
   <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script defer src="config.js"></script>
   <script defer src="receipt.js?v=10-4"></script>
   <script defer src="cash-slip.js?v=11-3"></script>
-  <script defer src="app.js?v=12-2"></script>
+  <script defer src="app.js?v=13-1"></script>
 </head>
 <body>
   <main class="shell">
@@ -35,10 +35,11 @@
         <div class="grid dashboard-grid"><section class="card"><h3>ที่มารายรับ</h3><div id="dashboard-sources" class="dashboard-categories"></div><p class="muted" id="dashboard-tax"></p></section><section class="card"><div class="section-head"><h3>รายการล่าสุด</h3><button class="outline small" id="dashboard-all">ดูทั้งหมด</button></div><div id="dashboard-recent" class="dashboard-recent"></div></section></div>
       </section>
       <section class="view" id="portfolio-view">
-        <div class="portfolio-intro"><div><h3>พอร์ตหุ้นของฉัน</h3><p>บันทึกซื้อ–ขายและราคาล่าสุดเอง แยกหุ้นไทย THB กับหุ้นสหรัฐ USD</p></div><label>ตลาด<select id="portfolio-market"><option value="SET">หุ้นไทย · THB</option><option value="US">หุ้นสหรัฐ · USD</option></select></label></div>
-        <p class="portfolio-notice">รายการพอร์ตยังไม่เปลี่ยนยอดบัญชีเงินอัตโนมัติ และราคาที่กรอกเป็นราคาอ้างอิง ไม่ใช่ราคาตลาดเรียลไทม์</p>
+        <div class="portfolio-intro"><div><h3>พอร์ตหุ้นของฉัน</h3><p>บันทึกซื้อ–ขายและเปรียบเทียบราคาล่าสุดกับต้นทุน แยกหุ้นไทย THB กับหุ้นสหรัฐ USD</p></div><label>ตลาด<select id="portfolio-market"><option value="SET">หุ้นไทย · THB</option><option value="US">หุ้นสหรัฐ · USD</option></select></label></div>
+        <p class="portfolio-notice">รายการพอร์ตยังไม่เปลี่ยนยอดบัญชีเงินอัตโนมัติ ราคาจากผู้ให้บริการอาจมีดีเลย์ ตรวจวันที่ราคาก่อนตัดสินใจ</p>
         <div class="dashboard-metrics" id="portfolio-metrics"></div>
-        <section class="card"><div class="section-head"><div><h3>หุ้นที่ติดตาม</h3><p>มูลค่าและกำไรที่ยังไม่ขายจะแสดงเมื่อใส่ราคาล่าสุด</p></div></div><div id="portfolio-holdings" class="holdings-grid"></div></section>
+        <section class="card"><div class="section-head"><div><h3>หุ้นที่ติดตาม</h3><p>มูลค่าและกำไรที่ยังไม่ขายจะแสดงเมื่อมีราคาล่าสุด</p></div><button type="button" class="outline small" id="toggle-archived-securities" hidden>หุ้นที่เอาออก</button></div><div id="portfolio-holdings" class="holdings-grid"></div><div id="archived-securities" class="stack archived-securities" hidden></div></section>
+        <section class="card"><h3>ราคาหุ้นสหรัฐอัตโนมัติ</h3><p class="muted">สมัคร <a href="https://twelvedata.com/pricing" target="_blank" rel="noopener noreferrer">Twelve Data แพ็กเกจ Basic ฟรี</a> แล้วใส่ API key ของคุณ เว็บจะดึงราคาหุ้นสหรัฐเมื่อเปิดใช้งาน และกดอัปเดตเองได้ หุ้นไทยยังใช้ราคาที่กรอกเอง API key เก็บเฉพาะในเบราว์เซอร์นี้ ไม่ถูกบันทึกในฐานข้อมูล</p><form id="quote-key-form" class="quote-key-form"><label>API key ของ Twelve Data<input id="quote-api-key" type="password" autocomplete="off" placeholder="ใส่ API key จาก Twelve Data" required></label><div class="form-actions"><button type="button" class="outline small" id="remove-quote-key">ลบ API key</button><button type="button" class="outline small" id="refresh-prices">อัปเดตราคาเดี๋ยวนี้</button><button type="submit">บันทึก API key</button></div></form><p id="quote-status" class="muted" role="status">ยังไม่ได้เชื่อม Twelve Data</p></section>
         <section class="card"><div class="section-head"><div><h3>กราฟหุ้นจาก TradingView</h3><p>เลือกหุ้นหรือกรอกรหัสตลาด:หุ้น เช่น NASDAQ:AAPL</p></div></div><div class="chart-picker"><label>หุ้นในพอร์ต<select id="chart-security"></select></label><label>รหัสบน TradingView<input id="chart-symbol" maxlength="36" placeholder="NASDAQ:AAPL" autocapitalize="characters"></label><button type="button" id="chart-show">ดูกราฟ</button></div><p class="muted" id="chart-help">กราฟใช้สำหรับดูประกอบการตัดสินใจเท่านั้น ราคาที่คำนวณพอร์ตยังเป็นราคาที่คุณกรอกเอง</p><div id="stock-chart" class="stock-chart" aria-live="polite"><p class="empty">เลือกหุ้นแล้วกดดูกราฟ</p></div><p class="muted">ข้อมูลกราฟและความล่าช้าขึ้นกับ TradingView และตลาดนั้น ๆ หุ้นไทยเปิดดูบนเว็บไซต์ TradingView เพราะ Widget ฟรียังไม่ยืนยันสิทธิ์แสดงข้อมูล SET</p></section>
         <div class="grid portfolio-form-grid">
           <section class="card"><h3>เพิ่มหุ้น</h3><form id="security-form"><label>สัญลักษณ์หุ้น<input id="security-symbol" maxlength="20" placeholder="เช่น PTT หรือ AAPL" autocapitalize="characters" required></label><label>ชื่อหุ้น<input id="security-name" maxlength="120" placeholder="ชื่อบริษัท" required></label><button type="submit">เพิ่มหุ้นในตลาดที่เลือก</button></form></section>
