@@ -3,16 +3,19 @@
   const months = { 'มค': 1, 'กพ': 2, 'มีค': 3, 'เมย': 4, 'พค': 5, 'มิย': 6, 'กค': 7, 'สค': 8, 'กย': 9, 'ตค': 10, 'พย': 11, 'ธค': 12 };
   const compact = value => String(value || '').replace(/\s+/g, ' ').trim();
   function date(text) {
-    const match = compact(text).match(/(\d{1,2})\s*(ม\.?ค|ก\.?พ|มี\.?ค|เม\.?ย|พ\.?ค|มิ\.?ย|ก\.?ค|ส\.?ค|ก\.?ย|ต\.?ค|พ\.?ย|ธ\.?ค)\.?\s*(\d{2,4})/);
-    if (!match) return '';
-    const month = months[match[2].replace(/\./g, '')];
-    let year = Number(match[3]);
+    const clean = compact(text);
+    const match = clean.match(/(\d{1,2})\s*(ม\.?ค|ก\.?พ|มี\.?ค|เม\.?ย|พ\.?ค|มิ\.?ย|ก\.?ค|ส\.?ค|ก\.?ย|ต\.?ค|พ\.?ย|ธ\.?ค)\.?\s*(\d{2,4})/);
+    const fuzzy = !match && clean.match(/(\d{1,2})\s*ก\.?ุ?ย\.?\s*(\d{2,4})/);
+    if (!match && !fuzzy) return { value: '', reliable: false };
+    const found = match || fuzzy;
+    const month = match ? months[match[2].replace(/\./g, '')] : 9;
+    let year = Number(found[3] || found[2]);
     if (year < 100) year += 2500;
     if (year >= 2400) year -= 543;
-    const day = Number(match[1]);
-    if (!month || year < 2000 || year > 2100 || day < 1 || day > 31) return '';
+    const day = Number(found[1]);
+    if (!month || year < 2000 || year > 2100 || day < 1 || day > 31) return { value: '', reliable: false };
     const iso = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    return new Date(`${iso}T12:00:00Z`).toISOString().slice(0, 10) === iso ? iso : '';
+    return { value: new Date(`${iso}T12:00:00Z`).toISOString().slice(0, 10) === iso ? iso : '', reliable: Boolean(match) };
   }
   function amount(lines) {
     const values = [];
@@ -44,11 +47,12 @@
     else if (payment) description = 'ชำระเงินตามสลิป';
     else if (transfer) description = 'โอนเงินตามสลิป';
     else if (incoming) description = 'รับเงินตามสลิป';
-    const money = amount(lines);
-    const parsed = { bank, kind, date: date(full), amount: money.value, description, text: String(text || ''), payment, transfer, incoming };
-    parsed.ready = Boolean(payment && bank && parsed.date && parsed.amount && money.reliable && description && !incoming && !transfer);
+    const money = amount(lines); const when = date(full);
+    const parsed = { bank, kind, date: when.value, amount: money.value, description, text: String(text || ''), payment, transfer, incoming };
+    parsed.ready = Boolean(payment && bank && parsed.date && when.reliable && parsed.amount && money.reliable && description && !incoming && !transfer);
     parsed.warnings = [];
     if (!parsed.date) parsed.warnings.push('อ่านวันที่ไม่ได้');
+    else if (!when.reliable) parsed.warnings.push('เดือนอ่านไม่ชัด กรุณาตรวจวันที่');
     if (!parsed.amount) parsed.warnings.push('อ่านยอดเงินไม่ได้');
     if (!bank) parsed.warnings.push('ระบุธนาคารไม่ได้');
     if (transfer) parsed.warnings.push('กรุณาตรวจว่าเป็นรายจ่ายหรือโอนระหว่างบัญชีตัวเอง');

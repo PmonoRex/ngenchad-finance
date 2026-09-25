@@ -490,18 +490,20 @@
     cashSlipStatus(`บันทึก${kindNames[data.kind]} ${money(amount)} วันที่ ${data.occurred_on} แล้ว`);
     say('บันทึกรายการจากสลิปแล้ว');
   }
-  async function enhanceCashSlip(image) {
+  async function enhanceCashSlip(image, region = [0, 0, 1, 1], threshold = 182) {
     const bitmap = await createImageBitmap(image);
     try {
-      const scale = Math.min(1.5, 3200 / Math.max(bitmap.width, bitmap.height));
+      const [rx, ry, rw, rh] = region;
+      const sourceWidth = Math.round(bitmap.width * rw), sourceHeight = Math.round(bitmap.height * rh);
+      const scale = region[2] === 1 ? Math.min(1.5, 3200 / Math.max(bitmap.width, bitmap.height)) : Math.min(3, 3200 / Math.max(sourceWidth, sourceHeight));
       const canvas = document.createElement('canvas');
-      canvas.width = Math.round(bitmap.width * scale); canvas.height = Math.round(bitmap.height * scale);
+      canvas.width = Math.round(sourceWidth * scale); canvas.height = Math.round(sourceHeight * scale);
       const context = canvas.getContext('2d', { willReadFrequently: true });
-      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      context.drawImage(bitmap, Math.round(bitmap.width * rx), Math.round(bitmap.height * ry), sourceWidth, sourceHeight, 0, 0, canvas.width, canvas.height);
       const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
       for (let i = 0; i < pixels.data.length; i += 4) {
         const luminance = pixels.data[i] * .2126 + pixels.data[i + 1] * .7152 + pixels.data[i + 2] * .0722;
-        const value = luminance < 182 ? 0 : 255;
+        const value = luminance < threshold ? 0 : 255;
         pixels.data[i] = value; pixels.data[i + 1] = value; pixels.data[i + 2] = value;
       }
       context.putImageData(pixels, 0, 0);
@@ -528,6 +530,25 @@
           const enhanced = await enhanceCashSlip(image);
           const retry = (await worker.recognize(enhanced)).data;
           ocr = { text: `${ocr.text}\n${retry.text}`, confidence: Math.max(ocr.confidence, retry.confidence) };
+        }
+        let partial = window.CashSlip.parse(ocr.text);
+        if (!partial.date || !partial.amount || partial.warnings.some(w => w.startsWith('เดือน'))) {
+          const dimensions = await createImageBitmap(image);
+          const tall = dimensions.height > dimensions.width * 1.3;
+          dimensions.close();
+          const dateRegion = tall ? [0.03, 0.78, 0.67, 0.13] : [0.02, 0.02, 0.67, 0.17];
+          const moneyRegion = tall ? [0.03, 0.39, 0.67, 0.18] : partial.payment ? [0.03, 0.74, 0.68, 0.13] : [0.02, 0.59, 0.67, 0.20];
+          if (!partial.date || partial.warnings.some(w => w.startsWith('เดือน'))) {
+            cashSlipStatus('กำลังอ่านเฉพาะส่วนวันที่…');
+            const crop = await enhanceCashSlip(image, dateRegion, partial.payment ? 135 : 175);
+            ocr.text += `\n${(await worker.recognize(crop)).data.text}`;
+          }
+          partial = window.CashSlip.parse(ocr.text);
+          if (!partial.amount) {
+            cashSlipStatus('กำลังอ่านเฉพาะส่วนจำนวนเงิน…');
+            const crop = await enhanceCashSlip(image, moneyRegion, partial.bank === 'dime' ? 190 : 135);
+            ocr.text += `\n${(await worker.recognize(crop)).data.text}`;
+          }
         }
       } finally { await worker.terminate(); }
       const parsed = window.CashSlip.parse(ocr.text);
