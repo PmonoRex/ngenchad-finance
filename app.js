@@ -350,6 +350,7 @@
     $('receipt-quantity').value = data.quantity || '';
     $('receipt-price').value = data.unitPrice || '';
     $('receipt-fees').value = data.fees || '';
+    $('receipt-ocr-text').textContent = data.text || '';
     $('receipt-review').hidden = false;
   }
   function receiptFormData() {
