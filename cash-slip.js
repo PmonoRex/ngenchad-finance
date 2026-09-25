@@ -16,15 +16,17 @@
   }
   function amount(lines) {
     const values = [];
+    const fallback = [];
     for (let i = 0; i < lines.length; i++) {
-      if (!/จำนวน|จ่ายบิล|ยอดเงิน|ยอดชำระ/.test(lines[i])) continue;
-      const nearby = lines.slice(i, i + 3).join(' ');
+      const labelled = /จำนวน|จ่ายบิล|ยอดเงิน|ยอดชำระ|จํานวน/.test(lines[i]);
+      const nearby = labelled ? lines.slice(i, i + 3).join(' ') : lines[i];
       for (const hit of nearby.matchAll(/(?:^|[^\d])(\d{1,3}(?:,\d{3})*|\d{1,8})[.,](\d{2})(?=\s*(?:บาท|THB)|\s|$)/g)) {
         const n = Number(`${hit[1].replace(/,/g, '')}.${hit[2]}`);
-        if (n > 0 && n < 100000000) values.push(n);
+        if (n > 0 && n < 100000000) (labelled ? values : fallback).push(n);
       }
     }
-    return values.length ? String(values[0].toFixed(2)) : '';
+    const n = values[0] || Math.max(0, ...fallback);
+    return { value: n ? String(n.toFixed(2)) : '', reliable: values.length > 0 };
   }
   function parse(text) {
     const lines = String(text || '').split(/\r?\n/).map(compact).filter(Boolean);
@@ -42,8 +44,9 @@
     else if (payment) description = 'ชำระเงินตามสลิป';
     else if (transfer) description = 'โอนเงินตามสลิป';
     else if (incoming) description = 'รับเงินตามสลิป';
-    const parsed = { bank, kind, date: date(full), amount: amount(lines), description, text: String(text || ''), payment, transfer, incoming };
-    parsed.ready = Boolean(payment && bank && parsed.date && parsed.amount && description && !incoming && !transfer);
+    const money = amount(lines);
+    const parsed = { bank, kind, date: date(full), amount: money.value, description, text: String(text || ''), payment, transfer, incoming };
+    parsed.ready = Boolean(payment && bank && parsed.date && parsed.amount && money.reliable && description && !incoming && !transfer);
     parsed.warnings = [];
     if (!parsed.date) parsed.warnings.push('อ่านวันที่ไม่ได้');
     if (!parsed.amount) parsed.warnings.push('อ่านยอดเงินไม่ได้');

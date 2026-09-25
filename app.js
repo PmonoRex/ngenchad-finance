@@ -449,6 +449,8 @@
     const live = state.accounts.filter(a => !a.archived_at && a.currency === 'THB');
     fillSelect($('cash-slip-account'), live, 'เลือกบัญชี THB', a => a.name);
     fillSelect($('cash-slip-to-account'), live, 'เลือกบัญชี THB', a => a.name);
+    $('cash-slip-account').value = '';
+    $('cash-slip-to-account').value = '';
     const matches = cashSlipAccounts(parsed.bank);
     if (matches.length === 1) $('cash-slip-account').value = matches[0].id;
     updateCashSlipKind();
@@ -488,6 +490,24 @@
     cashSlipStatus(`บันทึก${kindNames[data.kind]} ${money(amount)} วันที่ ${data.occurred_on} แล้ว`);
     say('บันทึกรายการจากสลิปแล้ว');
   }
+  async function enhanceCashSlip(image) {
+    const bitmap = await createImageBitmap(image);
+    try {
+      const scale = Math.min(1.5, 3200 / Math.max(bitmap.width, bitmap.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(bitmap.width * scale); canvas.height = Math.round(bitmap.height * scale);
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+      for (let i = 0; i < pixels.data.length; i += 4) {
+        const luminance = pixels.data[i] * .2126 + pixels.data[i + 1] * .7152 + pixels.data[i + 2] * .0722;
+        const value = luminance < 182 ? 0 : 255;
+        pixels.data[i] = value; pixels.data[i + 1] = value; pixels.data[i + 2] = value;
+      }
+      context.putImageData(pixels, 0, 0);
+      return await new Promise((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('ปรับภาพสลิปไม่สำเร็จ')), 'image/png'));
+    } finally { bitmap.close(); }
+  }
   async function importCashSlip(file) {
     if (!file || cashSlipBusy) return;
     cashSlipBusy = true; $('cash-slip-file').disabled = true; $('cash-slip-review').hidden = true; pendingCashSlip = null;
@@ -501,7 +521,15 @@
       const tesseract = await loadExternalScript('https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js', 'Tesseract');
       const worker = await tesseract.createWorker(['tha', 'eng'], 1, { logger: m => { if (m.status === 'recognizing text') cashSlipStatus(`กำลังอ่านสลิป ${Math.round((m.progress || 0) * 100)}%…`); } });
       let ocr;
-      try { ocr = (await worker.recognize(image)).data; } finally { await worker.terminate(); }
+      try {
+        ocr = (await worker.recognize(image)).data;
+        if (!window.CashSlip.parse(ocr.text).date || !window.CashSlip.parse(ocr.text).amount) {
+          cashSlipStatus('กำลังปรับความคมชัดและอ่านซ้ำ…');
+          const enhanced = await enhanceCashSlip(image);
+          const retry = (await worker.recognize(enhanced)).data;
+          ocr = { text: `${ocr.text}\n${retry.text}`, confidence: Math.max(ocr.confidence, retry.confidence) };
+        }
+      } finally { await worker.terminate(); }
       const parsed = window.CashSlip.parse(ocr.text);
       pendingCashSlip = { fingerprint, parsed };
       fillCashSlipReview(parsed);
