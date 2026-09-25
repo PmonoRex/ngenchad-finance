@@ -56,7 +56,7 @@
     if (!quantity) quantity = (full.match(/\b0\.\d{5,8}\b/) || [])[0] || '';
     const unitPrice = afterLabel(lines, 'ราคาที่ได้จริง|ราคาต่อหุ้น|execution price|fill price|price per share');
     const statedGross = afterLabel(lines, 'มูลค่าหุ้น|มูลค่าซื้อขาย|trade value|share value');
-    const commission = afterLabel(lines, 'ค่าคอมมิชชั่น|commission|brokerage');
+    const commission = afterLabel(lines, 'ค่าคอมมิช(?:ชั่น|ชัน)|commission|brokerage');
     const vat = afterLabel(lines, 'ภาษีมูลค่าเพิ่ม|VAT|sales tax');
     const tradedOn = parseDate(lines);
     const fees = commission && vat ? (Math.round((Number(commission) + Number(vat)) * 10000) / 10000).toFixed(4) : '';

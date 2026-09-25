@@ -318,7 +318,7 @@
     const name = file.name.toLowerCase();
     if (name.endsWith('.heic') || name.endsWith('.heif') || /heic|heif/.test(file.type)) {
       const converter = await loadExternalScript('https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js', 'heic2any');
-      const result = await converter({ blob: file, toType: 'image/jpeg', quality: 0.95 });
+      const result = await converter({ blob: file, toType: 'image/png' });
       return Array.isArray(result) ? result[0] : result;
     }
     if (name.endsWith('.pdf') || file.type === 'application/pdf') {
