@@ -16,7 +16,7 @@
   <script defer src="config.js"></script>
   <script defer src="receipt.js?v=10-4"></script>
   <script defer src="cash-slip.js?v=11-3"></script>
-  <script defer src="app.js?v=12-1"></script>
+  <script defer src="app.js?v=12-2"></script>
 </head>
 <body>
   <main class="shell">
@@ -28,7 +28,7 @@
       <nav class="tabs" aria-label="หน้าในเว็บ"><button class="tab active" data-view="dashboard">ภาพรวม</button><button class="tab" data-view="transactions">รายการเงิน</button><button class="tab" data-view="portfolio">พอร์ตหุ้น</button><button class="tab" data-view="tax">ภาษี</button><button class="tab" data-view="accounts">บัญชีและหมวด</button><button class="tab" data-view="notes">บันทึก</button></nav>
       <p class="message" id="workspace-message" role="status"></p>
       <section class="view active" id="dashboard-view">
-        <section class="card assets-card"><div class="section-head"><div><h3>สินทรัพย์รวมที่บันทึก</h3><p>ยอดเงินในบัญชี + มูลค่าหุ้นที่ถือ แยกตามสกุลเงิน</p></div></div><div id="asset-summary" class="asset-summary"></div><p id="asset-warning" class="muted asset-warning"></p></section>
+        <section class="card assets-card"><div class="section-head"><div><h3>สินทรัพย์รวมที่บันทึก</h3><p>ยอดเงินในบัญชี + หุ้นที่ถือ แยกตามสกุลเงิน</p></div></div><div id="asset-summary" class="asset-summary"></div><p id="asset-warning" class="muted asset-warning"></p></section>
         <div class="dashboard-controls"><p>สรุปจากรายการที่บันทึกจริง · ไม่นับรายการโอนและรายการที่ลบ</p><div class="dashboard-filters"><label>สกุลเงิน<select id="dashboard-currency"><option value="THB">THB</option><option value="USD">USD</option></select></label><label>ช่วงเวลา<select id="dashboard-period"><option value="3">3 เดือน</option><option value="6" selected>6 เดือน</option><option value="12">12 เดือน</option></select></label></div></div>
         <div class="dashboard-metrics" id="dashboard-metrics"></div>
         <div class="grid dashboard-grid"><section class="card"><div class="section-head"><div><h3>รายรับและรายจ่ายรายเดือน</h3><p>รายรับเป็นยอดหลังหักภาษี</p></div></div><div id="dashboard-chart" class="dashboard-chart" role="img" aria-label="กราฟรายรับและรายจ่ายรายเดือน"></div><div class="chart-legend"><span><i class="income-dot"></i> รายรับสุทธิ</span><span><i class="expense-dot"></i> รายจ่าย</span></div></section><section class="card"><h3>รายจ่ายตามหมวด</h3><div id="dashboard-categories" class="dashboard-categories"></div></section></div>
