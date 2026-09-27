@@ -27,8 +27,15 @@ begin
 end $$;
 select set_config('request.jwt.claims','{"sub":"82836a50-e03f-4fc5-ae85-1b8b8f0b1012","role":"authenticated"}',true);
 do $$
+declare rejected boolean:=false;
 begin
  if exists(select 1 from public.accounts) or exists(select 1 from public.investment_trades) then raise exception 'Owner isolation failed';end if;
+ begin
+ insert into public.accounts(owner_id,name,kind,currency,opening_balance) values('82836a50-e03f-4fc5-ae85-1b8b8f0b1011','Spoof owner','cash','THB',0);
+ exception when insufficient_privilege then rejected:=true;end;
+ if not rejected then raise exception 'Owner spoof write accepted';end if;
+ if exists(select 1 from public.profiles where id<>'82836a50-e03f-4fc5-ae85-1b8b8f0b1012') then raise exception 'Profile isolation failed';end if;
+ if has_function_privilege('anon','public.export_finance_backup()','EXECUTE') or has_function_privilege('anon','public.restore_finance_backup(jsonb)','EXECUTE') then raise exception 'Anonymous backup access allowed';end if;
  perform public.restore_finance_backup(current_setting('qa.backup')::jsonb);
  if (select balance from public.account_balances where currency='USD')<>982 then raise exception 'Restored balance mismatch';end if;
  if (select count(*) from public.notes)<>1 or (select count(*) from public.savings_goals)<>1 then raise exception 'Incomplete restore';end if;
