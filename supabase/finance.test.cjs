@@ -23,3 +23,9 @@ const csv=ext.slice(ext.indexOf(' function csvCell('),ext.indexOf(' function csv
 vm.runInContext(csv,context);assert.equal(context.csvCell('=HYPERLINK("evil")'),'"\'=HYPERLINK(""evil"")"');
 assert.equal(context.csvCell('ชื่อ,"ทดสอบ"'),'"ชื่อ,""ทดสอบ"""');
 console.log('Passed: money precision, fractional gross, weighted cost, realized profit, void history, oversell, percentage, CSV safety, HTML bindings');
+const ocrContext=vm.createContext({window:{}});
+for(const file of ['receipt.js','cash-slip.js'])vm.runInContext(fs.readFileSync(__dirname+'/../'+file,'utf8'),ocrContext);
+assert.equal(ocrContext.window.TradeReceipt.parse('unreadable document').ready,false);
+assert.ok(ocrContext.window.CashSlip.parse('unreadable document').warnings.length>0);
+assert.equal(ocrContext.window.TradeReceipt.parse('Dime! cancelled').ready,false);
+console.log('Passed: incomplete OCR and cancelled confirmations require review');
