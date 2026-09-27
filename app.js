@@ -86,6 +86,7 @@
       resetTransaction(); resetNote(); pendingReceipt = null; pendingCashSlip = null;
       ['receipt-ocr-text','cash-slip-ocr-text'].forEach(id => $(id).textContent = '');
       $('receipt-review').hidden = true; $('cash-slip-review').hidden = true;
+      $('receipt-status').textContent = 'ยังไม่ได้เลือกไฟล์'; $('cash-slip-status').textContent = 'ยังไม่ได้เลือกไฟล์'; $('quote-status').textContent = 'ยังไม่ได้เชื่อม Twelve Data'; say('');
       document.querySelectorAll('#workspace form').forEach(form => form.reset());
       $('trade-date').value = today(); $('price-date').value = today();
       window.financeExtras?.clear();
@@ -98,8 +99,9 @@
     visible('setup', false); visible('login', !user); visible('workspace', !!user && !state.recovery); visible('signout', !!user);
     $('status').textContent = user ? 'ข้อมูลส่วนตัว' : 'เข้าสู่ระบบเพื่อดูข้อมูล';
     $('user-email').textContent = user?.email || '';
-    if (user) { renderAll(); void loadData(); }
-    else { say(''); }
+    renderAll();
+    if (user) void loadData();
+    else say('');
     window.financeMembers?.session(user);
   }
   function switchView(view) {
