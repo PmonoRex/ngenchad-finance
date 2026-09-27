@@ -18,6 +18,12 @@ async function submit(id){await el(id).listeners.submit({preventDefault(){},targ
  vm.runInContext(app.slice(app.indexOf('  async function loadData()'),app.indexOf('  function showAuth(')),loadContext);
  const request=vm.runInContext('loadData()',loadContext);loadContext.state.user={id:'new'};pending.forEach(resolve=>resolve([]));await request;
  assert.equal(renders,0);assert.equal(loadContext.state.accounts[0],'new user sentinel');
+ const storage=new Map([['ngenchad_twelvedata_key:new','fake-key-for-new-user']]);
+ const switchState={user:{id:'old'},accounts:[{id:'private'}],transactions:[{amount:'999'}],recovery:false};let redraws=0,clears=0;
+ const switchContext=vm.createContext({state:switchState,dataGeneration:0,pendingReceipt:{text:'private'},pendingCashSlip:{text:'private'},quotes:{key:'fake-old-key'},quoteStorageKey:id=>'ngenchad_twelvedata_key:'+id,localStorage:{getItem:key=>storage.get(key),removeItem:key=>storage.delete(key)},$:el,document:{querySelectorAll:()=>[]},resetTransaction(){},resetNote(){},clearStockChart(){},today:()=> '2026-09-27',visible(){},say(){},renderAll:()=>redraws++,loadData:async()=>{},window:{financeExtras:{clear:()=>clears++}}});
+ vm.runInContext(app.slice(app.indexOf('  function showAuth('),app.indexOf('  function switchView(')),switchContext);
+ switchContext.showAuth({id:'new',email:'new@example.invalid'});assert.equal(switchState.accounts.length,0);assert.equal(switchState.transactions.length,0);assert.equal(switchContext.quotes.key,'fake-key-for-new-user');assert.equal(switchContext.pendingReceipt,null);assert.equal(switchContext.pendingCashSlip,null);assert.equal(clears,1);
+ switchContext.showAuth(null);assert.equal(switchContext.quotes.key,'');assert.equal(redraws,2);
  const html=fs.readFileSync(__dirname+'/../index.html','utf8');for(const match of source.matchAll(/\$\(['"]([\w-]+)['"]\)/g))assert.ok(html.includes(`id="${match[1]}"`),'missing '+match[1]);
- console.log('Passed: password mismatch, email confirmation flow, password cleanup, auth redirect, stale-user response isolation, member form bindings');
+ console.log('Passed: password mismatch, email confirmation flow, password cleanup, auth redirect, stale-user response isolation, member form bindings, per-user API key and logout cleanup');
 })().catch(error=>{console.error(error);process.exitCode=1});
