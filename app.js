@@ -175,7 +175,7 @@
     if (atCost) caveats.push(`${atCost} หุ้นยังไม่มีราคาอ้างอิง จึงใช้ต้นทุนแทนมูลค่าตลาด`);
     if (missing) caveats.push(`ยังไม่รวม ${missing} หุ้นที่คำนวณข้อมูลไม่ได้`);
     if (negativeAccounts) caveats.push(`มี ${negativeAccounts} บัญชีติดลบ กรุณาตรวจยอดตั้งต้น`);
-    caveats.push('รายการซื้อ–ขายหุ้นยังไม่ปรับยอดบัญชีเงินอัตโนมัติ หากยอดบัญชียังไม่หักเงินซื้อหุ้น ยอดรวมอาจสูงกว่าความจริง');
+    if (state.trades.some(t => !t.voided_at && !t.cash_account_id)) caveats.push('มีรายการหุ้นที่ยังไม่ผูกบัญชีเงินสด ตรวจยอดบัญชีและรายการซ้ำก่อนเชื่อม เพื่อให้สินทรัพย์รวมสะท้อนเงินซื้อ–ขายครบ');
     warning.append(elem('span', `${fx.status === 'ready' || fx.status === 'error' ? ' · ' : ''}${caveats.join(' · ')}`));
   }
   function dashboardCurrency(t) {
@@ -885,6 +885,7 @@
     for (const note of state.notes) {
       const card = elem('div', null, 'item'); const content = elem('div'); content.append(elem('strong', note.title));
       if (note.transaction_id) { const t = state.transactions.find(x => x.id === note.transaction_id); if (t) content.append(elem('small', `ผูกกับ ${t.occurred_on} · ${t.description || kindNames[t.kind]}`)); }
+      if (note.security_id) content.append(elem('small', `หุ้น ${security(note.security_id)?.symbol || '—'}`));
       content.append(elem('div', note.body, 'note-body'));
       const edit = elem('button', 'แก้ไข', 'outline small'); edit.dataset.editNote = note.id; card.append(content, edit); box.append(card);
     }
