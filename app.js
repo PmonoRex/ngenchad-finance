@@ -109,7 +109,7 @@
       $(`${name}-view`).classList.toggle('active', name === view);
       document.querySelector(`[data-view="${name}"]`).classList.toggle('active', name === view);
     }
-    $('view-title').textContent = { dashboard: 'ภาพรวมการเงิน', transactions: 'รายการเงิน', portfolio: 'พอร์ตหุ้น', tax: 'ประมาณการภาษี', accounts: 'บัญชีและหมวด', notes: 'บันทึก', planning: 'เป้าหมายและงบ', data: 'สำรองข้อมูล' }[view];
+    $('view-title').textContent = { dashboard: 'ภาพรวมการเงิน', transactions: 'รายการเงิน', portfolio: 'พอร์ตลงทุน', tax: 'ประมาณการภาษี', accounts: 'บัญชีและหมวด', notes: 'บันทึก', planning: 'เป้าหมายและงบ', data: 'สำรองข้อมูล' }[view];
     say('');
   }
 
@@ -256,7 +256,7 @@
       ['ยอดรวมบัญชี', balance, 'ยอดปัจจุบันของบัญชีสกุลนี้'],
       ['รายรับสุทธิ', income, 'หลังหักภาษี ณ ที่จ่าย'],
       ['รายจ่าย', expense, 'ไม่รวมเงินโอน'],
-      ['เงินคงเหลือจากรายการ', income - expense, 'รายรับสุทธิ − รายจ่าย']
+      ['มูลค่าพอร์ต', state.securities.filter(s => s.currency === currency).reduce((total, s) => { const m = portfolioModel(s.id); return total + (s.last_price != null ? tradeGross(m.shares, units(s.last_price)) : m.cost); }, 0n), 'ราคาที่บันทึก · ใช้ต้นทุนเมื่อไม่มีราคา']
     ];
     const cards = $('dashboard-metrics'); cards.replaceChildren();
     for (const [label, value, detail] of metrics) {
@@ -915,7 +915,10 @@
   function renderNotes() {
     const box = $('notes'); box.replaceChildren();
     if (!state.notes.length) { box.append(elem('p', 'ยังไม่มีบันทึก', 'muted')); return; }
-    for (const note of state.notes) {
+    const query = $('notes-search')?.value.trim().toLocaleLowerCase() || '';
+    const matches = state.notes.filter(n => !query || `${n.title} ${n.body} ${security(n.security_id)?.symbol || ''}`.toLocaleLowerCase().includes(query));
+    if (!matches.length) box.append(elem('p', 'ไม่พบบันทึกที่ค้นหา', 'muted'));
+    for (const note of matches) {
       const card = elem('div', null, 'item'); const content = elem('div'); content.append(elem('strong', note.title));
       if (note.transaction_id) { const t = state.transactions.find(x => x.id === note.transaction_id); if (t) content.append(elem('small', `ผูกกับ ${t.occurred_on} · ${t.description || kindNames[t.kind]}`)); }
       if (note.security_id) content.append(elem('small', `หุ้น ${security(note.security_id)?.symbol || '—'}`));
@@ -1122,7 +1125,7 @@
     else { await loadData(); say(t.voided_at ? 'กู้คืนรายการหุ้นแล้ว' : 'ยกเลิกรายการหุ้นแล้ว กู้คืนได้'); }
     button.disabled = false;
   });
-  $('quick-add').addEventListener('click', () => { switchView('transactions'); $('transaction-form').scrollIntoView({ behavior: 'smooth' }); $('transaction-amount').focus(); });
+  $('quick-add').addEventListener('click', () => { if (window.financeDesign) { window.financeDesign.quickAdd(); return; } switchView('transactions'); $('transaction-form').scrollIntoView({ behavior: 'smooth' }); $('transaction-amount').focus(); });
   $('transaction-kind').addEventListener('change', updateKind);
   $('gross-amount').addEventListener('input', updateNet); $('withheld-tax').addEventListener('input', updateNet);
   $('search').addEventListener('input', renderTransactions); $('kind-filter').addEventListener('change', renderTransactions);
@@ -1195,7 +1198,7 @@
     const button = event.target.closest('[data-edit-note]'); if (!button) return; const note = state.notes.find(n => n.id === button.dataset.editNote); if (!note) return;
     state.editNote = note.id; $('note-title').value = note.title; $('note-body').value = note.body; $('note-transaction').value = note.transaction_id || ''; $('note-security').value = note.security_id || ''; $('note-form-title').textContent = 'แก้ไขบันทึก'; visible('cancel-note-edit', true); $('note-form').scrollIntoView({ behavior: 'smooth' });
   });
-  window.financeCore = { state, db, $, elem, units, decimal, money, moneyUnits, shareUnits, shareText, portfolioModel, fillSelect, account, security, say, loadData, switchView, today, showAuth };
+  window.financeCore = { state, db, $, elem, units, decimal, money, moneyUnits, shareUnits, shareText, portfolioModel, fillSelect, account, security, say, loadData, switchView, today, showAuth, renderNotes };
   resetTransaction();
   $('trade-date').value = today(); $('price-date').value = today();
 })();
