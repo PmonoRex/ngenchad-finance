@@ -71,3 +71,13 @@ Dashboard แสดงยอดหัก ณ ที่จ่ายที่บ�
 ติดตั้ง `supabase/008_session13_watchlist.sql` ใน Supabase SQL Editor แล้ว เพื่อเพิ่มสถานะซ่อนหุ้น หุ้นที่ไม่มีจำนวนถือสามารถเอาออกจากรายการติดตามและกู้กลับได้ ประวัติซื้อขายไม่ถูกลบ หุ้นที่ยังถืออยู่ยังคงแสดงในพอร์ตและยอดสินทรัพย์
 
 สมัคร API key ฟรีจาก Twelve Data แล้วใส่ในหน้าพอร์ตหุ้นของเว็บ Key เก็บใน localStorage ของเบราว์เซอร์นั้นเท่านั้น เว็บจะดึงราคา `/quote` สำหรับหุ้นสหรัฐที่ติดตามเมื่อเข้าสู่ระบบ (ไม่เกินหนึ่งครั้งทุก 15 นาทีต่อแท็บ) หรือเมื่อกดอัปเดต ราคาที่ตอบกลับต้องตรงสัญลักษณ์ สกุล USD และมีวันที่ จึงจะบันทึกใน `securities` หาก API ล้มเหลวจะคงราคาครั้งก่อนและแจ้งข้อผิดพลาด ราคาไม่ใช่ข้อมูลที่รับประกันแบบเรียลไทม์ หุ้นไทยยังกรอกราคาเอง
+
+## Sessions 14–18
+- Optional same-currency cash account for trades; account balance includes active linked trades and their fees. Historical trades remain unlinked. Check duplicate manual cash expenses before linking.
+- Stock details show trades, linked dividends and investment notes. Dividend form credits net cash once.
+- JSON server export preserves NUMERIC as strings, excludes credentials and images. Atomic restore supports an empty authenticated account only and rewrites ownership; existing account data is never overwritten.
+- Cash/trade CSV includes deleted/void status and escapes spreadsheet formula prefixes.
+- Savings goals may use manual saved amounts or a same-currency account balance. Goals are informational, not additional assets. Monthly budgets count active cash expenses only.
+- Supabase: apply `supabase/009_sessions14_18.sql` after 008. All new tables use owner RLS, composite ownership FKs, and currency/reference checks.
+- QA: `node tests/finance.test.cjs`; `tests/database.sql` runs rollback-only integration checks with temporary users. No real user financial records are changed by QA.
+- Free quote/FX APIs may be delayed or unavailable. OCR can require manual review. Thai tax remains an estimate and does not implement foreign dividend tax credits.

@@ -59,11 +59,11 @@
         allRows('accounts', 'id,name,kind,currency,opening_balance,created_at,archived_at', q => q.order('created_at', { ascending: true })),
         allRows('account_balances', 'account_id,owner_id,currency,balance'),
         allRows('categories', 'id,name,flow', q => q.order('name')),
-        allRows('cash_transactions', 'id,kind,occurred_on,from_account_id,to_account_id,category_id,amount,received_amount,description,gross_amount,withheld_tax_amount,income_source,source_fingerprint,deleted_at,created_at', q => q.order('occurred_on', { ascending: false }).order('created_at', { ascending: false })),
-        allRows('notes', 'id,title,body,transaction_id,created_at', q => q.order('created_at', { ascending: false })),
+        allRows('cash_transactions', 'id,kind,occurred_on,from_account_id,to_account_id,category_id,amount,received_amount,description,gross_amount,withheld_tax_amount,income_source,source_fingerprint,security_id,deleted_at,created_at', q => q.order('occurred_on', { ascending: false }).order('created_at', { ascending: false })),
+        allRows('notes', 'id,title,body,transaction_id,security_id,created_at', q => q.order('created_at', { ascending: false })),
         allRows('quick_templates', 'id,name,kind,account_id,category_id,amount,description,income_source,gross_amount,withheld_tax_amount,created_at', q => q.order('created_at', { ascending: false })),
         allRows('securities', 'id,market,symbol,name,currency,last_price,price_as_of,archived_at,created_at', q => q.order('market').order('symbol')),
-        allRows('investment_trades', 'id,security_id,side,traded_on,quantity,unit_price,gross_amount,fees,note,source_fingerprint,voided_at,created_at', q => q.order('traded_on', { ascending: false }).order('created_at', { ascending: false })),
+        allRows('investment_trades', 'id,security_id,side,traded_on,quantity,unit_price,gross_amount,fees,note,cash_account_id,source_fingerprint,voided_at,created_at', q => q.order('traded_on', { ascending: false }).order('created_at', { ascending: false })),
         allRows('tax_profiles', 'tax_year,freelance_mode,freelance_expense,dividend_mode,other_deductions,forecast_salary,forecast_freelance')
       ]);
       Object.assign(state, { accounts, balances, categories, transactions, notes, templates, securities, trades, taxProfiles });
@@ -80,15 +80,15 @@
     else { Object.assign(state, { accounts: [], balances: [], categories: [], transactions: [], notes: [], templates: [], securities: [], trades: [], taxProfiles: [] }); say(''); }
   }
   function switchView(view) {
-    for (const name of ['dashboard', 'transactions', 'portfolio', 'tax', 'accounts', 'notes']) {
+    for (const name of ['dashboard', 'transactions', 'portfolio', 'tax', 'accounts', 'notes', 'planning', 'data']) {
       $(`${name}-view`).classList.toggle('active', name === view);
       document.querySelector(`[data-view="${name}"]`).classList.toggle('active', name === view);
     }
-    $('view-title').textContent = { dashboard: 'ภาพรวมการเงิน', transactions: 'รายการเงิน', portfolio: 'พอร์ตหุ้น', tax: 'ประมาณการภาษี', accounts: 'บัญชีและหมวด', notes: 'บันทึก' }[view];
+    $('view-title').textContent = { dashboard: 'ภาพรวมการเงิน', transactions: 'รายการเงิน', portfolio: 'พอร์ตหุ้น', tax: 'ประมาณการภาษี', accounts: 'บัญชีและหมวด', notes: 'บันทึก', planning: 'เป้าหมายและงบ', data: 'สำรองข้อมูล' }[view];
     say('');
   }
 
-  function renderAll() { renderDashboard(); renderPortfolio(); renderTax(); renderAccounts(); renderCategories(); renderTransactions(); renderTemplates(); renderNotes(); }
+  function renderAll() { renderDashboard(); renderPortfolio(); renderTax(); renderAccounts(); renderCategories(); renderTransactions(); renderTemplates(); renderNotes(); window.financeExtras?.render(); }
   async function loadExchangeRate() {
     if (fx.status === 'loading') return;
     fx.status = 'loading'; renderAssetSummary();
@@ -367,7 +367,7 @@
       details.append(elem('span', 'มูลค่า / กำไรที่ยังไม่ขาย'), elem('strong', value != null ? `${moneyUnits(value, currency)} / ${moneyUnits(value - cost, currency)}` : '—'));
       details.append(elem('span', 'เทียบต้นทุน'), elem('strong', value != null ? percentChange(value, cost) : '—', value != null && value < cost ? 'negative' : 'positive'));
       details.append(elem('span', 'กำไรจากการขายแล้ว'), elem('strong', moneyUnits(realized, currency)));
-      card.append(details);
+      card.append(details); const detailButton=elem('button','รายละเอียดหุ้น','outline small'); detailButton.dataset.stockDetail=s.id; card.append(detailButton);
       if (shares === 0n) { const remove = elem('button', 'เอาออกจากติดตาม', 'outline small danger'); remove.type = 'button'; remove.dataset.archiveSecurity = s.id; card.append(remove); }
       holdings.append(card);
     }
@@ -386,7 +386,7 @@
     for (const [label, value, detail] of metrics) {
       const card = elem('div', null, 'metric-card'); card.append(elem('span', label), elem('strong', value), elem('small', detail)); box.append(card);
     }
-    renderTradeList(); updateTradePreview();
+    renderTradeList(); updateTradePreview(); window.financeExtras?.portfolio();
   }
   function renderTradeList() {
     const market = $('portfolio-market').value, body = $('trade-list'); body.replaceChildren();
@@ -524,6 +524,8 @@
       throw new Error('พบรายการที่มีหุ้น วันที่ จำนวน ราคา และค่าธรรมเนียมตรงกันแล้ว กรุณาตรวจประวัติ');
     }
     if (auto && !data.broker) throw new Error('ต้องตรวจเอกสารก่อนบันทึก');
+    const cashAccount = account($('receipt-cash-account').value);
+    if (cashAccount && cashAccount.currency !== (market === 'SET' ? 'THB' : 'USD')) throw new Error('บัญชีเงินสดต้องมีสกุลเดียวกับหุ้น');
     let securityId = existing?.id;
     if (!securityId) {
       if (side === 'sell') throw new Error('ยังไม่มีหุ้นนี้ในพอร์ต กรุณาตรวจรายการก่อน');
@@ -531,7 +533,7 @@
       if (result.error) throw result.error;
       securityId = result.data.id;
     }
-    const row = { owner_id: state.user.id, security_id: securityId, side, traded_on: tradedOn, quantity: shareDecimal(quantity), unit_price: decimal(unitPrice), fees: decimal(fees), note: `นำเข้าจากหลักฐาน${data.broker ? ' ' + data.broker : ''}`, source_fingerprint: fingerprint };
+    const row = { cash_account_id: $('receipt-cash-account').value || null, owner_id: state.user.id, security_id: securityId, side, traded_on: tradedOn, quantity: shareDecimal(quantity), unit_price: decimal(unitPrice), fees: decimal(fees), note: `นำเข้าจากหลักฐาน${data.broker ? ' ' + data.broker : ''}`, source_fingerprint: fingerprint };
     portfolioModel(securityId, { ...row, id: 'zzzzzzzz', gross_amount: decimal(gross), created_at: new Date().toISOString(), voided_at: null });
     const result = await db.from('investment_trades').insert(row);
     if (result.error) throw result.error;
@@ -1060,7 +1062,7 @@
       const fees = units($('trade-fees').value || '0'); if (fees < 0n) throw new Error('ค่าธรรมเนียมต้องไม่ติดลบ');
       const gross = tradeGross(quantity, unitPrice); if (gross <= 0n) throw new Error('มูลค่าซื้อขายต้องมากกว่า 0');
       const side = $('trade-side').value; if (side === 'sell' && fees > gross) throw new Error('ค่าธรรมเนียมขายเกินมูลค่าขาย');
-      const data = { owner_id: state.user.id, security_id: securityId, side, traded_on: $('trade-date').value, quantity: shareDecimal(quantity), unit_price: decimal(unitPrice), fees: decimal(fees), note: $('trade-note').value.trim() };
+      const data = { owner_id: state.user.id, security_id: securityId, side, traded_on: $('trade-date').value, quantity: shareDecimal(quantity), unit_price: decimal(unitPrice), fees: decimal(fees), cash_account_id: $('trade-cash-account').value || null, note: $('trade-note').value.trim() };
       portfolioModel(securityId, { ...data, id: 'zzzzzzzz', gross_amount: decimal(gross), created_at: new Date().toISOString(), voided_at: null });
       const { error } = await db.from('investment_trades').insert(data); if (error) throw error;
       event.target.reset(); $('trade-date').value = today(); $('trade-fees').value = '0'; await loadData(); say('บันทึกรายการหุ้นแล้ว');
@@ -1102,6 +1104,8 @@
     event.preventDefault(); if (!state.user) return; const button = $('save-transaction'); button.disabled = true;
     try {
       const data = formTransaction();
+      const previous = state.transactions.find(t => t.id === state.editTransaction);
+      data.security_id = data.kind === "income" && data.income_source === "dividend" ? previous?.security_id || null : null;
       const result = state.editTransaction ? await db.from('cash_transactions').update(data).eq('id', state.editTransaction) : await db.from('cash_transactions').insert({ ...data, owner_id: state.user.id });
       if (result.error) throw result.error; resetTransaction(); await loadData(); say('บันทึกรายการแล้ว');
     } catch (error) { say(`บันทึกไม่สำเร็จ: ${error.message}`, true); } finally { button.disabled = false; }
@@ -1117,7 +1121,9 @@
   $('save-template').addEventListener('click', async () => {
     if (!state.user) return;
     try {
-      const data = formTransaction(); if (data.kind === 'transfer') throw new Error('รายการโปรดรองรับรายรับและรายจ่าย');
+      const data = formTransaction();
+      const previous = state.transactions.find(t => t.id === state.editTransaction);
+      data.security_id = data.kind === "income" && data.income_source === "dividend" ? previous?.security_id || null : null; if (data.kind === 'transfer') throw new Error('รายการโปรดรองรับรายรับและรายจ่าย');
       const name = data.description || category(data.category_id)?.name || kindNames[data.kind];
       const { error } = await db.from('quick_templates').insert({ owner_id: state.user.id, name, kind: data.kind, account_id: $('transaction-account').value, category_id: data.category_id, amount: data.amount, description: data.description, income_source: data.income_source, gross_amount: data.gross_amount, withheld_tax_amount: data.withheld_tax_amount });
       if (error) throw error; await loadData(); say('บันทึกรายการโปรดแล้ว');
@@ -1133,7 +1139,7 @@
   $('note-form').addEventListener('submit', async event => {
     event.preventDefault(); if (!state.user) return; const button = event.target.querySelector('button[type="submit"]'); button.disabled = true;
     try {
-      const data = { title: $('note-title').value.trim(), body: $('note-body').value, transaction_id: $('note-transaction').value || null, updated_at: new Date().toISOString() };
+      const data = { title: $('note-title').value.trim(), body: $('note-body').value, transaction_id: $('note-transaction').value || null, security_id: $('note-security').value || null, updated_at: new Date().toISOString() };
       if (!data.title) throw new Error('กรุณาใส่หัวข้อ');
       const result = state.editNote ? await db.from('notes').update(data).eq('id', state.editNote) : await db.from('notes').insert({ ...data, owner_id: state.user.id });
       if (result.error) throw result.error; resetNote(); await loadData(); say('บันทึกโน้ตแล้ว');
@@ -1141,8 +1147,9 @@
   });
   $('notes').addEventListener('click', event => {
     const button = event.target.closest('[data-edit-note]'); if (!button) return; const note = state.notes.find(n => n.id === button.dataset.editNote); if (!note) return;
-    state.editNote = note.id; $('note-title').value = note.title; $('note-body').value = note.body; $('note-transaction').value = note.transaction_id || ''; $('note-form-title').textContent = 'แก้ไขบันทึก'; visible('cancel-note-edit', true); $('note-form').scrollIntoView({ behavior: 'smooth' });
+    state.editNote = note.id; $('note-title').value = note.title; $('note-body').value = note.body; $('note-transaction').value = note.transaction_id || ''; $('note-security').value = note.security_id || ''; $('note-form-title').textContent = 'แก้ไขบันทึก'; visible('cancel-note-edit', true); $('note-form').scrollIntoView({ behavior: 'smooth' });
   });
+  window.financeCore = { state, db, $, elem, units, decimal, money, moneyUnits, shareUnits, shareText, portfolioModel, fillSelect, account, security, say, loadData, switchView, today };
   resetTransaction();
   $('trade-date').value = today(); $('price-date').value = today();
 })();
