@@ -1,7 +1,7 @@
 (() => {
   const $ = id => document.getElementById(id);
   const config = window.APP_CONFIG || {};
-  const state = { user: null, accounts: [], balances: [], categories: [], transactions: [], notes: [], templates: [], securities: [], trades: [], taxProfiles: [], editTransaction: null, editNote: null, trash: false, voidTrades: false, showArchivedSecurities: false };
+  const state = { dataReady: false, user: null, accounts: [], balances: [], categories: [], transactions: [], notes: [], templates: [], securities: [], trades: [], taxProfiles: [], editTransaction: null, editNote: null, trash: false, voidTrades: false, showArchivedSecurities: false };
   const fx = { status: 'idle', rate: null, date: null, source: null };
   const quotes = { busy: false, lastCheck: 0, key: '' };
   let dataGeneration = 0, authGeneration = 0;
@@ -73,7 +73,7 @@
         allRows('tax_profiles', 'tax_year,freelance_mode,freelance_expense,dividend_mode,other_deductions,forecast_salary,forecast_freelance')
       ]);
       if (state.user?.id !== userId || generation !== dataGeneration) return;
-      Object.assign(state, { accounts, balances, categories, transactions, notes, templates, securities, trades, taxProfiles });
+      Object.assign(state, { dataReady: true, accounts, balances, categories, transactions, notes, templates, securities, trades, taxProfiles });
       renderAll();
       if (quotes.key && Date.now() - quotes.lastCheck > 15 * 60 * 1000) void refreshStockPrices();
     } catch (error) { if (state.user?.id === userId && generation === dataGeneration) say(`โหลดข้อมูลไม่สำเร็จ: ${error.message}`, true); }
@@ -82,12 +82,13 @@
     const changed = state.user?.id !== user?.id;
     if (changed) {
       ++dataGeneration;
-      Object.assign(state, { accounts: [], balances: [], categories: [], transactions: [], notes: [], templates: [], securities: [], trades: [], taxProfiles: [], editTransaction: null, editNote: null });
+      Object.assign(state, { dataReady: false, accounts: [], balances: [], categories: [], transactions: [], notes: [], templates: [], securities: [], trades: [], taxProfiles: [], editTransaction: null, editNote: null });
       resetTransaction(); resetNote(); pendingReceipt = null; pendingCashSlip = null;
       ['receipt-ocr-text','cash-slip-ocr-text'].forEach(id => $(id).textContent = '');
       $('receipt-review').hidden = true; $('cash-slip-review').hidden = true;
       $('receipt-status').textContent = 'ยังไม่ได้เลือกไฟล์'; $('cash-slip-status').textContent = 'ยังไม่ได้เลือกไฟล์'; $('quote-status').textContent = 'ยังไม่ได้เชื่อม Twelve Data'; say('');
       document.querySelectorAll('#workspace form').forEach(form => form.reset());
+      resetTransaction();
       $('trade-date').value = today(); $('price-date').value = today();
       window.financeExtras?.clear();
       clearStockChart();
@@ -113,7 +114,7 @@
     say('');
   }
 
-  function renderAll() { renderDashboard(); renderPortfolio(); renderTax(); renderAccounts(); renderCategories(); renderTransactions(); renderTemplates(); renderNotes(); window.financeExtras?.render(); }
+  function renderAll() { renderDashboard(); renderPortfolio(); renderTax(); renderAccounts(); renderCategories(); renderTransactions(); renderTemplates(); renderNotes(); window.financeExtras?.render(); window.financeOnboarding?.render(); }
   async function loadExchangeRate() {
     if (fx.status === 'loading') return;
     fx.status = 'loading'; renderAssetSummary();

@@ -6,6 +6,16 @@
  let profileGeneration=0;
  const message=text=>{$('login-message').textContent=text;};
  function mode(signup){$('login-form').hidden=signup;$('signup-form').hidden=!signup;$('reset-request-form').hidden=true;message('');}
+ const googleButton=$('google-login');
+ const googleReady=window.APP_CONFIG?.googleLoginEnabled===true;
+ googleButton.disabled=!googleReady;
+ $('google-login-status').textContent=googleReady?'ใช้บัญชี Google ของคุณเพื่อเข้าสู่ระบบหรือสมัครสมาชิก':'Google Login จะเปิดให้ใช้เมื่อเชื่อมต่อบริการเสร็จ';
+ googleButton.addEventListener('click',async()=>{
+  if(!googleReady)return;
+  googleButton.disabled=true;message('กำลังเปิด Google เพื่อเข้าสู่ระบบ');
+  try{const {error}=await db.auth.signInWithOAuth({provider:'google',options:{redirectTo:redirect}});if(error)throw error;}
+  catch(error){message(authError(error));googleButton.disabled=false;}
+ });
  $('auth-login-tab').addEventListener('click',()=>mode(false));
  $('auth-signup-tab').addEventListener('click',()=>mode(true));
  function authError(error){
