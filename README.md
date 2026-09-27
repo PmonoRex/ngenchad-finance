@@ -81,3 +81,10 @@ Dashboard แสดงยอดหัก ณ ที่จ่ายที่บ�
 - Supabase: apply `supabase/009_sessions14_18.sql` after 008. All new tables use owner RLS, composite ownership FKs, and currency/reference checks.
 - QA: `node supabase/finance.test.cjs`; `supabase/database_qa.sql` runs rollback-only integration checks with temporary users. No real user financial records are changed by QA.
 - Free quote/FX APIs may be delayed or unavailable. OCR can require manual review. Thai tax remains an estimate and does not implement foreign dividend tax credits.
+
+## Session 19 — separate member accounts
+Public signup UI, email confirmation/resend, password reset, editable display name and optional starter categories. Every finance table remains protected by owner RLS; there is no shared workspace or administrator financial-data page. Browser API keys are scoped to user ID. Sign-out/account switches clear forms, OCR review, backup blobs and planning state; stale network responses do not populate another user's screen.
+
+For general email signup and password recovery, configure custom SMTP in Supabase (the default sender only supports project-team emails). Keep Confirm email enabled and use Site URL `https://pmonorex.github.io/ngenchad-finance/`. Enabling signup alone does not make external email delivery available. No SMTP password or service-role key belongs in the frontend.
+
+QA: `node supabase/members.test.cjs` verifies member forms and stale response isolation; `supabase/database_qa.sql` includes owner spoof write rejection, profile isolation and anonymous backup RPC denial. Test users and fixtures are rolled back.

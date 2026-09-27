@@ -3,7 +3,11 @@
   const config = window.APP_CONFIG || {};
   const state = { user: null, accounts: [], balances: [], categories: [], transactions: [], notes: [], templates: [], securities: [], trades: [], taxProfiles: [], editTransaction: null, editNote: null, trash: false, voidTrades: false, showArchivedSecurities: false };
   const fx = { status: 'idle', rate: null, date: null, source: null };
-  const quotes = { busy: false, lastCheck: 0, key: localStorage.getItem('ngenchad_twelvedata_key') || '' };
+  const quotes = { busy: false, lastCheck: 0, key: '' };
+  let dataGeneration = 0, authGeneration = 0;
+  const recoveryRequested = new URLSearchParams(location.hash.slice(1)).get('type') === 'recovery';
+  state.recovery = recoveryRequested;
+  const quoteStorageKey = userId => `ngenchad_twelvedata_key:${userId}`;
   const sourceNames = { salary: 'เงินเดือน', freelance: 'งานเสริม', dividend: 'ปันผล', other: 'รายรับอื่น' };
   const kindNames = { income: 'รายรับ', expense: 'รายจ่าย', transfer: 'โอนเงิน' };
   const visible = (id, yes) => { $(id).hidden = !yes; };
@@ -54,6 +58,8 @@
     }
   }
   async function loadData() {
+    const userId = state.user?.id, generation = ++dataGeneration;
+    if (!userId) return;
     try {
       const [accounts, balances, categories, transactions, notes, templates, securities, trades, taxProfiles] = await Promise.all([
         allRows('accounts', 'id,name,kind,currency,opening_balance,created_at,archived_at', q => q.order('created_at', { ascending: true })),
@@ -66,18 +72,35 @@
         allRows('investment_trades', 'id,security_id,side,traded_on,quantity,unit_price,gross_amount,fees,note,cash_account_id,source_fingerprint,voided_at,created_at', q => q.order('traded_on', { ascending: false }).order('created_at', { ascending: false })),
         allRows('tax_profiles', 'tax_year,freelance_mode,freelance_expense,dividend_mode,other_deductions,forecast_salary,forecast_freelance')
       ]);
+      if (state.user?.id !== userId || generation !== dataGeneration) return;
       Object.assign(state, { accounts, balances, categories, transactions, notes, templates, securities, trades, taxProfiles });
       renderAll();
       if (quotes.key && Date.now() - quotes.lastCheck > 15 * 60 * 1000) void refreshStockPrices();
-    } catch (error) { say(`โหลดข้อมูลไม่สำเร็จ: ${error.message}`, true); }
+    } catch (error) { if (state.user?.id === userId && generation === dataGeneration) say(`โหลดข้อมูลไม่สำเร็จ: ${error.message}`, true); }
   }
   function showAuth(user) {
+    const changed = state.user?.id !== user?.id;
+    if (changed) {
+      ++dataGeneration;
+      Object.assign(state, { accounts: [], balances: [], categories: [], transactions: [], notes: [], templates: [], securities: [], trades: [], taxProfiles: [], editTransaction: null, editNote: null });
+      resetTransaction(); resetNote(); pendingReceipt = null; pendingCashSlip = null;
+      ['receipt-ocr-text','cash-slip-ocr-text'].forEach(id => $(id).textContent = '');
+      $('receipt-review').hidden = true; $('cash-slip-review').hidden = true;
+      document.querySelectorAll('#workspace form').forEach(form => form.reset());
+      $('trade-date').value = today(); $('price-date').value = today();
+      window.financeExtras?.clear();
+      clearStockChart();
+    }
     state.user = user;
-    visible('setup', false); visible('login', !user); visible('workspace', !!user); visible('signout', !!user);
+    if (!user) localStorage.removeItem('ngenchad_twelvedata_key');
+    quotes.key = user ? localStorage.getItem(quoteStorageKey(user.id)) || '' : ''; quotes.lastCheck = 0;
+    $('quote-api-key').value = quotes.key;
+    visible('setup', false); visible('login', !user); visible('workspace', !!user && !state.recovery); visible('signout', !!user);
     $('status').textContent = user ? 'ข้อมูลส่วนตัว' : 'เข้าสู่ระบบเพื่อดูข้อมูล';
     $('user-email').textContent = user?.email || '';
-    if (user) { $('quote-api-key').value = quotes.key; void loadData(); }
-    else { Object.assign(state, { accounts: [], balances: [], categories: [], transactions: [], notes: [], templates: [], securities: [], trades: [], taxProfiles: [] }); say(''); }
+    if (user) { renderAll(); void loadData(); }
+    else { say(''); }
+    window.financeMembers?.session(user);
   }
   function switchView(view) {
     for (const name of ['dashboard', 'transactions', 'portfolio', 'tax', 'accounts', 'notes', 'planning', 'data']) {
@@ -305,17 +328,19 @@
   }
   async function refreshStockPrices(force = false) {
     if (!state.user || !quotes.key || quotes.busy || (!force && Date.now() - quotes.lastCheck < 15 * 60 * 1000)) return;
+    const quoteUserId = state.user.id, requestKey = quotes.key;
     const targets = state.securities.filter(s => s.market === 'US' && !s.archived_at);
     if (!targets.length) { $('quote-status').textContent = 'ยังไม่มีหุ้นสหรัฐให้ดึงราคา'; return; }
     quotes.busy = true; quotes.lastCheck = Date.now(); $('refresh-prices').disabled = true;
     $('quote-status').textContent = `กำลังดึงราคา ${targets.length} หุ้นจาก Twelve Data…`;
     let updated = 0; const failed = [];
     for (const s of targets) {
+      if (state.user?.id !== quoteUserId) break;
       try {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 12000);
         let response;
-        try { response = await fetch(`https://api.twelvedata.com/quote?symbol=${encodeURIComponent(s.symbol)}`, { headers: { Authorization: `apikey ${quotes.key}` }, signal: controller.signal }); }
+        try { response = await fetch(`https://api.twelvedata.com/quote?symbol=${encodeURIComponent(s.symbol)}`, { headers: { Authorization: `apikey ${requestKey}` }, signal: controller.signal }); }
         finally { clearTimeout(timeout); }
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const quote = await response.json();
@@ -326,12 +351,14 @@
         const date = String(quote.datetime).slice(0, 10);
         if (date > today() || date < '2020-01-01') throw new Error('วันที่ราคาไม่ถูกต้อง');
         const rounded = price.toFixed(4);
-        const { error } = await db.from('securities').update({ last_price: rounded, price_as_of: date }).eq('id', s.id);
+        if (state.user?.id !== quoteUserId) break;
+        const { error } = await db.from('securities').update({ last_price: rounded, price_as_of: date }).eq('id', s.id).eq('owner_id', quoteUserId);
         if (error) throw error;
         s.last_price = rounded; s.price_as_of = date; updated++;
       } catch (error) { failed.push(`${s.symbol}: ${error.message}`); }
     }
     quotes.busy = false; $('refresh-prices').disabled = false;
+    if (state.user?.id !== quoteUserId) { if (state.user && quotes.key) void refreshStockPrices(); return; }
     renderDashboard(); renderPortfolio();
     $('quote-status').textContent = `${updated} หุ้นอัปเดตแล้ว${failed.length ? ` · ไม่สำเร็จ ${failed.join('; ')}` : ''} · ราคาตลาดอาจมีดีเลย์ ดูวันที่ในแต่ละหุ้น`;
   }
@@ -546,7 +573,8 @@
     say('บันทึกรายการหุ้นจากหลักฐานแล้ว');
   }
   async function importReceipt(file) {
-    if (!file || receiptBusy) return;
+    if (!file || receiptBusy || !state.user) return;
+    const importUserId = state.user.id;
     receiptBusy = true; $('receipt-file').disabled = true; $('receipt-review').hidden = true; pendingReceipt = null;
     try {
       if (file.size > 15 * 1024 * 1024) throw new Error('ไฟล์ต้องไม่เกิน 15 MB');
@@ -560,6 +588,7 @@
       let ocr;
       try { ocr = (await worker.recognize(image)).data; }
       finally { await worker.terminate(); }
+      if (state.user?.id !== importUserId) return;
       const parsed = window.TradeReceipt.parse(ocr.text);
       pendingReceipt = { fingerprint, parsed };
       fillReceiptReview(parsed);
@@ -660,7 +689,8 @@
     } finally { bitmap.close(); }
   }
   async function importCashSlip(file) {
-    if (!file || cashSlipBusy) return;
+    if (!file || cashSlipBusy || !state.user) return;
+    const importUserId = state.user.id;
     cashSlipBusy = true; $('cash-slip-file').disabled = true; $('cash-slip-review').hidden = true; pendingCashSlip = null;
     try {
       if (file.size > 15 * 1024 * 1024) throw new Error('ไฟล์ต้องไม่เกิน 15 MB');
@@ -700,6 +730,7 @@
           }
         }
       } finally { await worker.terminate(); }
+      if (state.user?.id !== importUserId) return;
       const parsed = window.CashSlip.parse(ocr.text);
       pendingCashSlip = { fingerprint, parsed };
       fillCashSlipReview(parsed);
@@ -940,16 +971,28 @@
 
   $('login-form').addEventListener('submit', async event => {
     event.preventDefault(); const button = event.target.querySelector('button'); button.disabled = true; $('login-message').textContent = 'กำลังเข้าสู่ระบบ...';
-    const { data, error } = await db.auth.signInWithPassword({ email: $('email').value.trim(), password: $('password').value });
-    button.disabled = false; $('password').value = '';
-    if (error) $('login-message').textContent = 'เข้าสู่ระบบไม่สำเร็จ ตรวจอีเมลและรหัสผ่าน';
-    else { $('login-message').textContent = ''; showAuth(data.user); }
+    try {
+      const { data, error } = await db.auth.signInWithPassword({ email: $('email').value.trim(), password: $('password').value });
+      if (error) $('login-message').textContent = error.code === 'email_not_confirmed' ? 'กรุณายืนยันอีเมลก่อนเข้าสู่ระบบ หรือกดส่งอีเมลยืนยันอีกครั้ง' : 'เข้าสู่ระบบไม่สำเร็จ ตรวจอีเมลและรหัสผ่าน';
+      else { $('login-message').textContent = ''; showAuth(data.user); }
+    } catch { $('login-message').textContent = 'เชื่อมต่อไม่สำเร็จ กรุณาลองอีกครั้ง'; }
+    finally { button.disabled = false; $('password').value = ''; }
   });
-  $('signout').addEventListener('click', async () => { const { error } = await db.auth.signOut(); if (error) say('ออกจากระบบไม่สำเร็จ', true); else showAuth(null); });
+  $('signout').addEventListener('click', async () => { const { error } = await db.auth.signOut(); if (error) say('ออกจากระบบไม่สำเร็จ', true); else { state.recovery = false; showAuth(null); } });
   db.auth.onAuthStateChange((_event, session) => {
-    if (session?.user?.id !== state.user?.id) setTimeout(() => showAuth(session?.user || null), 0);
+    if (_event !== 'INITIAL_SESSION' && _event !== 'TOKEN_REFRESHED') ++authGeneration;
+    if (_event === 'PASSWORD_RECOVERY') state.recovery = true;
+    if (session?.user?.id !== state.user?.id || _event === 'PASSWORD_RECOVERY') setTimeout(() => showAuth(session?.user || null), 0);
   });
-  db.auth.getUser().then(({ data, error }) => showAuth(error ? null : data.user)).catch(() => { visible('login', true); $('login-message').textContent = 'เชื่อม Supabase ไม่สำเร็จ'; });
+  const initialAuthGeneration = authGeneration;
+  db.auth.getUser().then(({ data, error }) => {
+    if (initialAuthGeneration !== authGeneration) return;
+    // Migrate the old browser key only for an already signed-in session.
+    const legacy = localStorage.getItem('ngenchad_twelvedata_key');
+    if (!error && data.user && legacy && !localStorage.getItem(quoteStorageKey(data.user.id))) localStorage.setItem(quoteStorageKey(data.user.id), legacy);
+    localStorage.removeItem('ngenchad_twelvedata_key');
+    showAuth(error ? null : data.user);
+  }).catch(() => { visible('login', true); $('login-message').textContent = 'เชื่อม Supabase ไม่สำเร็จ'; });
 
   document.querySelectorAll('[data-view]').forEach(b => b.addEventListener('click', () => switchView(b.dataset.view)));
   $('dashboard-currency').addEventListener('change', renderDashboard);
@@ -1021,12 +1064,12 @@
     event.preventDefault();
     const key = $('quote-api-key').value.trim();
     if (!/^[A-Za-z0-9]{8,128}$/.test(key)) { $('quote-status').textContent = 'API key ไม่ถูกต้อง กรุณาตรวจจาก Twelve Data'; return; }
-    quotes.key = key; quotes.lastCheck = 0; localStorage.setItem('ngenchad_twelvedata_key', key);
+    quotes.key = key; quotes.lastCheck = 0; localStorage.setItem(quoteStorageKey(state.user.id), key);
     $('quote-status').textContent = 'บันทึก API key ในเบราว์เซอร์นี้แล้ว';
     void refreshStockPrices(true);
   });
   $('remove-quote-key').addEventListener('click', () => {
-    quotes.key = ''; quotes.lastCheck = 0; localStorage.removeItem('ngenchad_twelvedata_key'); $('quote-api-key').value = '';
+    quotes.key = ''; quotes.lastCheck = 0; if (state.user) localStorage.removeItem(quoteStorageKey(state.user.id)); $('quote-api-key').value = '';
     $('quote-status').textContent = 'ลบ API key จากเบราว์เซอร์นี้แล้ว ราคาที่เคยบันทึกยังอยู่';
   });
   $('refresh-prices').addEventListener('click', () => {
@@ -1150,7 +1193,7 @@
     const button = event.target.closest('[data-edit-note]'); if (!button) return; const note = state.notes.find(n => n.id === button.dataset.editNote); if (!note) return;
     state.editNote = note.id; $('note-title').value = note.title; $('note-body').value = note.body; $('note-transaction').value = note.transaction_id || ''; $('note-security').value = note.security_id || ''; $('note-form-title').textContent = 'แก้ไขบันทึก'; visible('cancel-note-edit', true); $('note-form').scrollIntoView({ behavior: 'smooth' });
   });
-  window.financeCore = { state, db, $, elem, units, decimal, money, moneyUnits, shareUnits, shareText, portfolioModel, fillSelect, account, security, say, loadData, switchView, today };
+  window.financeCore = { state, db, $, elem, units, decimal, money, moneyUnits, shareUnits, shareText, portfolioModel, fillSelect, account, security, say, loadData, switchView, today, showAuth };
   resetTransaction();
   $('trade-date').value = today(); $('price-date').value = today();
 })();

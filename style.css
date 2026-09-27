@@ -38,3 +38,5 @@
 
 /* Sessions 14–18 */
 .planning-row{padding:16px 0;border-bottom:1px solid #e2e8f0}.planning-row progress{width:100%;height:16px;accent-color:#129b87}.planning-row button{margin:8px 8px 0 0}#trade-list td select{min-width:140px;max-width:190px}#trade-list td small{display:block;max-width:200px;white-space:normal}#restore-preview{white-space:pre-wrap;overflow-wrap:anywhere}#stock-detail-body p{margin:4px 0}#stock-detail button{margin:8px 8px 0 0}.tabs{overflow-x:auto}#planning-view .stack{margin-top:24px}@media(max-width:600px){.tabs .tab{flex-shrink:0}#data-view .form-actions{flex-direction:column}#data-view button{width:100%}.planning-row p{overflow-wrap:anywhere}}
+
+#login .form-actions{margin-bottom:18px}#login>button{margin:14px 8px 0 0}#signup-form p{font-size:.85rem}#profile-form{max-width:440px}#accounts-view>section.card{margin-bottom:24px}
